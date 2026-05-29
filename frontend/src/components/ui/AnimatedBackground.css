@@ -1,0 +1,257 @@
+/* Animated Background Container */
+.animated-background {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 0;
+    overflow: hidden;
+}
+
+/* ===== STARS EFFECT ===== */
+.stars-container {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+}
+
+.star {
+    position: absolute;
+    width: 3px;
+    height: 3px;
+    background: white;
+    border-radius: 50%;
+    opacity: 0;
+    animation: twinkle 3s ease-in-out infinite;
+    box-shadow: 0 0 4px rgba(255, 255, 255, 0.6);
+    will-change: opacity, transform;
+}
+
+@keyframes twinkle {
+
+    0%,
+    100% {
+        opacity: 0;
+        transform: scale(0.5);
+    }
+
+    50% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* ===== METEORS EFFECT ===== */
+.meteors-container {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+}
+
+.meteor {
+    position: absolute;
+    top: -100px;
+    width: 2px;
+    height: 80px;
+    background: linear-gradient(to bottom, rgba(255, 255, 255, 0.9), transparent);
+    border-radius: 50%;
+    animation: meteor-fall 3s linear infinite;
+    transform: rotate(45deg);
+    will-change: transform, opacity;
+}
+
+.meteor::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -2px;
+    width: 6px;
+    height: 6px;
+    background: white;
+    border-radius: 50%;
+    box-shadow: 0 0 20px 4px rgba(255, 255, 255, 0.6);
+}
+
+@keyframes meteor-fall {
+    0% {
+        opacity: 1;
+        transform: translateY(-100px) translateX(0) rotate(45deg);
+    }
+
+    100% {
+        opacity: 0;
+        transform: translateY(calc(100vh + 200px)) translateX(300px) rotate(45deg);
+    }
+}
+
+/* ===== PARTICLES EFFECT ===== */
+.particles-container {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+}
+
+.particle {
+    position: absolute;
+    bottom: -20px;
+    width: 8px;
+    height: 8px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 50%;
+    opacity: 0.6;
+    animation: float-up 10s ease-in-out infinite;
+}
+
+.particle:nth-child(odd) {
+    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+}
+
+.particle:nth-child(3n) {
+    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+}
+
+@keyframes float-up {
+    0% {
+        opacity: 0;
+        transform: translateY(0) rotate(0deg);
+    }
+
+    10% {
+        opacity: 0.6;
+    }
+
+    90% {
+        opacity: 0.6;
+    }
+
+    100% {
+        opacity: 0;
+        transform: translateY(-100vh) rotate(720deg);
+    }
+}
+
+/* ===== AURORA EFFECT ===== */
+.aurora-container {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    filter: blur(40px);
+    will-change: transform;
+}
+
+.aurora {
+    position: absolute;
+    width: 200%;
+    height: 50%;
+    opacity: 0.3;
+    animation: aurora-wave 8s ease-in-out infinite;
+}
+
+.aurora-1 {
+    top: 0;
+    left: -50%;
+    background: linear-gradient(180deg,
+            transparent 0%,
+            rgba(0, 255, 128, 0.4) 20%,
+            rgba(0, 200, 255, 0.3) 40%,
+            transparent 60%);
+    animation-delay: 0s;
+}
+
+.aurora-2 {
+    top: 10%;
+    left: -30%;
+    background: linear-gradient(180deg,
+            transparent 0%,
+            rgba(128, 0, 255, 0.3) 30%,
+            rgba(255, 0, 128, 0.2) 50%,
+            transparent 70%);
+    animation-delay: 2s;
+}
+
+.aurora-3 {
+    top: -5%;
+    left: -70%;
+    background: linear-gradient(180deg,
+            transparent 0%,
+            rgba(0, 128, 255, 0.3) 25%,
+            rgba(0, 255, 200, 0.2) 45%,
+            transparent 65%);
+    animation-delay: 4s;
+}
+
+@keyframes aurora-wave {
+
+    0%,
+    100% {
+        transform: translateX(0) skewX(-5deg);
+    }
+
+    50% {
+        transform: translateX(20%) skewX(5deg);
+    }
+}
+
+/* ===== MATRIX EFFECT ===== */
+.matrix-container {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    opacity: 0.15;
+}
+
+.matrix-column {
+    position: absolute;
+    top: -100%;
+    display: flex;
+    flex-direction: column;
+    animation: matrix-fall 7s linear infinite;
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    color: #00ff00;
+    text-shadow: 0 0 10px #00ff00;
+}
+
+.matrix-column span {
+    opacity: 0;
+    animation: matrix-fade 0.5s ease-out forwards;
+}
+
+@keyframes matrix-fall {
+    0% {
+        transform: translateY(0);
+    }
+
+    100% {
+        transform: translateY(200%);
+    }
+}
+
+@keyframes matrix-fade {
+    0% {
+        opacity: 1;
+    }
+
+    100% {
+        opacity: 0.3;
+    }
+}
+
+/* Dark mode adjustments */
+.dark .star {
+    box-shadow: 0 0 10px rgba(255, 255, 255, 1);
+}
+
+.dark .aurora {
+    opacity: 0.4;
+}
+
+.dark .particle {
+    opacity: 0.8;
+}
+
+.dark .matrix-container {
+    opacity: 0.25;
+}

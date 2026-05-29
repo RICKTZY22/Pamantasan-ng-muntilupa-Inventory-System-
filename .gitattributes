@@ -1,0 +1,3 @@
+# Force Unix line endings for deploy scripts — Windows CRLF breaks Linux
+Backend/Procfile text eol=lf
+Backend/build.sh text eol=lf

@@ -1,0 +1,9 @@
+export { default as Dashboard } from './Dashboard';
+export { default as Inventory } from './Inventory';
+export { default as Requests } from './Requests';
+export { default as Reports } from './Reports';
+export { default as Login } from './Login';
+export { default as Register } from './Register';
+export { default as Settings } from './Settings';
+export { default as Users } from './Users';
+export { default as AccountDeactivated } from './AccountDeactivated';
