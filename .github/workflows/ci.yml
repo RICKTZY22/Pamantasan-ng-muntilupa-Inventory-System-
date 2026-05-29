@@ -7,9 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  # ── Frontend ──────────────────────────────────────────────
   frontend:
-    name: Frontend – Lint & Build
+    name: Frontend - Lint, Test & Build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -24,17 +23,12 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - run: npm ci
+      - run: npm run lint
+      - run: npx vitest run --reporter=verbose
+      - run: npm run build
 
-      - name: Build
-        run: npm run build
-
-      - name: Test (Vitest)
-        run: npx vitest run --reporter=verbose
-        continue-on-error: true   # remove once test coverage is solid
-
-  # ── Backend ───────────────────────────────────────────────
   backend:
-    name: Backend – Lint & Test
+    name: Backend - Migrate & Test
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -45,7 +39,7 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+          POSTGRES_PASSWORD: postgres
           POSTGRES_DB: plmundb_test
         ports: ['5432:5432']
         options: >-
@@ -55,8 +49,8 @@ jobs:
           --health-retries 5
 
     env:
-      DATABASE_URL: postgres://postgres:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/plmundb_test
-      SECRET_KEY: ${{ secrets.CI_SECRET_KEY }}
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/plmundb_test
+      SECRET_KEY: django-insecure-ci-only-key
       DEBUG: 'False'
       ALLOWED_HOSTS: '*'
 
@@ -69,11 +63,7 @@ jobs:
           cache: pip
           cache-dependency-path: Backend/requirements.txt
 
+      - run: python -m pip install --upgrade pip
       - run: pip install -r requirements.txt
-
-      - name: Run migrations
-        run: python manage.py migrate --no-input
-
-      - name: Run tests
-        run: python manage.py test --verbosity=2
-        continue-on-error: true   # remove once test coverage is solid
+      - run: python manage.py migrate --no-input
+      - run: python manage.py test --verbosity=2
