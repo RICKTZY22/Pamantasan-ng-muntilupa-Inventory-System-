@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { ROLES, hasMinRole, isAdmin, isStaffOrAbove, hasPermission } from '../utils/roles';
 import authService from '../services/authService';
+import { setAccessToken } from '../services/api';
 import { formatApiError } from '../utils/errorUtils';
 import useUIStore from './uiStore';
 
@@ -97,9 +98,9 @@ const useAuthStore = create(
         (set, get) => ({
             // --- state ---
             user: null,
-            token: null,
-            refreshToken: null,
+            token: null,                 // access token — in memory only (also held in services/api.js)
             isAuthenticated: false,
+            isInitializing: true,        // true until the reload bootstrap (initializeAuth) resolves
             isLoading: false,
             error: null,
 
@@ -112,7 +113,9 @@ const useAuthStore = create(
 
             // actions
             setUser: (user) => set({ user, isAuthenticated: !!user }),
-            setToken: (token) => set({ token }),
+            // Access token lives in state (for the WS) AND in services/api.js memory
+            // (for the request interceptor). Keep both in sync here.
+            setToken: (token) => { set({ token }); setAccessToken(token); },
             clearError: () => set({ error: null }),
 
             login: async (credentials) => {
@@ -123,12 +126,12 @@ const useAuthStore = create(
 
                     const user = response.user;
                     const token = response.access;
-                    const refreshToken = response.refresh;
+                    // refresh token is now set by the server as an HttpOnly cookie.
 
+                    setAccessToken(token);
                     set({
                         user: mapUserResponse(user),
                         token,
-                        refreshToken,
                         isAuthenticated: true,
                         isLoading: false
                     });
@@ -180,18 +183,23 @@ const useAuthStore = create(
 
                     const user = response.user;
                     const token = response.access;
-                    const refreshToken = response.refresh;
+                    // refresh token is set by the server as an HttpOnly cookie.
 
+                    setAccessToken(token);
                     set({
                         user: mapUserResponse(user),
                         token,
-                        refreshToken,
                         isAuthenticated: true,
                         isLoading: false
                     });
 
                     // Load per-user UI settings (theme, etc.)
                     useUIStore.getState().loadUserSettings(user.id);
+
+                    // Start idle session timeout (same as login)
+                    const logoutFn = get().logout;
+                    _currentIdleHandler = attachIdleListeners(logoutFn);
+                    startIdleTimer(logoutFn);
 
                     return { success: true, message: 'Registration successful' };
                 } catch (error) {
@@ -287,17 +295,48 @@ const useAuthStore = create(
                 }
             },
 
+            // Re-mint the in-memory access token from the HttpOnly refresh cookie
+            // on app start (the access token doesn't survive a reload). Gated by a
+            // loading flag so ProtectedRoute doesn't flash/redirect prematurely.
+            initializeAuth: async () => {
+                if (!get().isAuthenticated) {
+                    set({ isInitializing: false });
+                    return false;
+                }
+                try {
+                    const { access } = await authService.refresh();
+                    get().setToken(access);
+                    // (re)attach idle session timeout
+                    detachIdleListeners(_currentIdleHandler);
+                    const logoutFn = get().logout;
+                    _currentIdleHandler = attachIdleListeners(logoutFn);
+                    startIdleTimer(logoutFn);
+                    // background flag/deactivation check
+                    get().refreshProfile();
+                    return true;
+                } catch {
+                    // refresh cookie gone/expired → drop the stale persisted session
+                    setAccessToken(null);
+                    set({ user: null, token: null, isAuthenticated: false });
+                    return false;
+                } finally {
+                    set({ isInitializing: false });
+                }
+            },
+
             logout: () => {
                 // Clear idle timer and listeners
                 clearIdleTimer();
                 detachIdleListeners(_currentIdleHandler);
                 _currentIdleHandler = null;
+                // Best-effort backend logout: blacklist the refresh token + clear the cookie.
+                authService.logout().catch(() => {});
+                setAccessToken(null);
                 // Reset UI settings to defaults
                 useUIStore.getState().resetToDefaults();
                 set({
                     user: null,
                     token: null,
-                    refreshToken: null,
                     isAuthenticated: false,
                     error: null,
                     _idleHandler: null,
@@ -308,10 +347,12 @@ const useAuthStore = create(
         }),
         {
             name: 'auth-storage',
+            // Persist only non-sensitive session markers. Tokens are NEVER
+            // persisted: the access token is in-memory, the refresh token is an
+            // HttpOnly cookie. `user` + `isAuthenticated` are kept so the reload
+            // bootstrap (initializeAuth) knows to silently refresh.
             partialize: (state) => ({
                 user: state.user,
-                token: state.token,
-                refreshToken: state.refreshToken,
                 isAuthenticated: state.isAuthenticated
             }),
         }

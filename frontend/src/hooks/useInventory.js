@@ -93,7 +93,7 @@ const useInventory = () => {
         setError(null);
         try {
             // Only send writable fields
-            const allowedKeys = ['name', 'category', 'quantity', 'status', 'location', 'description', 'imageUrl', 'accessLevel', 'isReturnable', 'borrowDuration', 'borrowDurationUnit'];
+            const allowedKeys = ['name', 'category', 'quantity', 'status', 'location', 'description', 'imageUrl', 'accessLevel', 'isReturnable', 'priority', 'borrowDuration', 'borrowDurationUnit'];
             const cleanData = {};
             allowedKeys.forEach(key => {
                 if (data[key] !== undefined && data[key] !== null && data[key] !== '') {

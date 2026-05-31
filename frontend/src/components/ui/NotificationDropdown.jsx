@@ -4,8 +4,6 @@ import {
     Bell,
     Check,
     Checks as CheckCheck,
-    Package,
-    FileText,
     Warning as AlertTriangle,
     ChatCircle as MessageCircle,
     Info,
@@ -14,16 +12,13 @@ import {
 } from '@phosphor-icons/react';
 import useNotifications from '../../hooks/useNotifications';
 
+// Keyed to the backend Notification.Type choices (COMMENT, STATUS_CHANGE,
+// REMINDER, OVERDUE). SYSTEM is the fallback for anything unmapped.
 const notificationIcons = {
     COMMENT: { icon: MessageCircle, color: 'text-blue-500', bg: 'bg-blue-100 dark:bg-blue-900/30' },
     STATUS_CHANGE: { icon: Check, color: 'text-emerald-500', bg: 'bg-emerald-100 dark:bg-emerald-900/30' },
     REMINDER: { icon: AlertTriangle, color: 'text-amber-500', bg: 'bg-amber-100 dark:bg-amber-900/30' },
     OVERDUE: { icon: X, color: 'text-red-500', bg: 'bg-red-100 dark:bg-red-900/30' },
-    REQUEST_APPROVED: { icon: Check, color: 'text-emerald-500', bg: 'bg-emerald-100 dark:bg-emerald-900/30' },
-    REQUEST_PENDING: { icon: FileText, color: 'text-amber-500', bg: 'bg-amber-100 dark:bg-amber-900/30' },
-    REQUEST_REJECTED: { icon: X, color: 'text-red-500', bg: 'bg-red-100 dark:bg-red-900/30' },
-    LOW_STOCK: { icon: AlertTriangle, color: 'text-orange-500', bg: 'bg-orange-100 dark:bg-orange-900/30' },
-    INVENTORY_UPDATE: { icon: Package, color: 'text-purple-500', bg: 'bg-purple-100 dark:bg-purple-900/30' },
     SYSTEM: { icon: Info, color: 'text-gray-500', bg: 'bg-gray-100 dark:bg-gray-700' },
 };
 

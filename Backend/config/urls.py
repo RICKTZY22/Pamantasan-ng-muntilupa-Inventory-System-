@@ -20,6 +20,7 @@ urlpatterns = [
     path('api/inventory/', include('apps.inventory.urls')),
     path('api/requests/', include('apps.requests.urls')),
     path('api/users/', include('apps.users.urls')),
+    path('api/messaging/', include('apps.messaging.urls')),
 
     # API docs (Swagger / Redoc)
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),

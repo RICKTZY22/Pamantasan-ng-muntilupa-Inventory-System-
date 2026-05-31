@@ -1,7 +1,7 @@
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from django.db.models import Q
+from django.db.models import Q, Count
 from django.utils import timezone
 from django.utils.html import strip_tags
 
@@ -129,10 +129,18 @@ class ItemViewSet(viewsets.ModelViewSet):
         item.status_changed_at = timezone.now()
         item.status_changed_by = request.user
 
-        # Set or clear maintenance ETA
+        # Set or clear maintenance ETA. datetime-local inputs from the UI are
+        # usually naive, so make them timezone-aware before saving.
         if new_status == 'MAINTENANCE' and maintenance_eta:
             from django.utils.dateparse import parse_datetime
             parsed = parse_datetime(maintenance_eta)
+            if parsed is None:
+                return Response(
+                    {'detail': 'Invalid maintenance ETA. Use an ISO date/time value.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if timezone.is_naive(parsed):
+                parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
             item.maintenance_eta = parsed
         else:
             item.maintenance_eta = None
@@ -166,22 +174,17 @@ class ItemViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def stats(self, request):
-        """Get inventory statistics."""
-        queryset = self.get_queryset()
-
-        stats = {
-            'total': queryset.count(),
-            'available': queryset.filter(status='AVAILABLE').count(),
-            'inUse': queryset.filter(status='IN_USE').count(),
-            'maintenance': queryset.filter(status='MAINTENANCE').count(),
-            'retired': queryset.filter(status='RETIRED').count(),
-            'lowStock': queryset.filter(
-                quantity__lte=Item.get_low_stock_threshold(),
-                quantity__gt=0,
-            ).count(),
-            'outOfStock': queryset.filter(quantity=0).count(),
-        }
-
+        """Get inventory statistics (one aggregate query, not seven)."""
+        threshold = Item.get_low_stock_threshold()
+        stats = self.get_queryset().aggregate(
+            total=Count('id'),
+            available=Count('id', filter=Q(status='AVAILABLE')),
+            inUse=Count('id', filter=Q(status='IN_USE')),
+            maintenance=Count('id', filter=Q(status='MAINTENANCE')),
+            retired=Count('id', filter=Q(status='RETIRED')),
+            lowStock=Count('id', filter=Q(quantity__lte=threshold, quantity__gt=0)),
+            outOfStock=Count('id', filter=Q(quantity=0)),
+        )
         return Response(stats)
 
     @action(detail=False, methods=['get'])
@@ -190,54 +193,50 @@ class ItemViewSet(viewsets.ModelViewSet):
         low stock items, and category breakdown in a single call.
         Replaces 4 separate API calls from the frontend (F10)."""
         from apps.requests.models import Request
+        from apps.requests.overdue import OUTSTANDING_STATUSES
 
         inv_qs = self.get_queryset()
+        threshold = Item.get_low_stock_threshold()
 
-        # Inventory stats
-        inventory_stats = {
-            'total': inv_qs.count(),
-            'available': inv_qs.filter(status='AVAILABLE').count(),
-            'inUse': inv_qs.filter(status='IN_USE').count(),
-            'maintenance': inv_qs.filter(status='MAINTENANCE').count(),
-            'retired': inv_qs.filter(status='RETIRED').count(),
-            'lowStock': inv_qs.filter(
-                quantity__lte=Item.get_low_stock_threshold(), quantity__gt=0,
-            ).count(),
-            'outOfStock': inv_qs.filter(quantity=0).count(),
-        }
+        # Inventory stats — single aggregate query.
+        inventory_stats = inv_qs.aggregate(
+            total=Count('id'),
+            available=Count('id', filter=Q(status='AVAILABLE')),
+            inUse=Count('id', filter=Q(status='IN_USE')),
+            maintenance=Count('id', filter=Q(status='MAINTENANCE')),
+            retired=Count('id', filter=Q(status='RETIRED')),
+            lowStock=Count('id', filter=Q(quantity__lte=threshold, quantity__gt=0)),
+            outOfStock=Count('id', filter=Q(quantity=0)),
+        )
 
         # Low stock items (serialized)
         low_stock_items = inv_qs.filter(
-            quantity__lte=Item.get_low_stock_threshold(), quantity__gt=0,
+            quantity__lte=threshold, quantity__gt=0,
         ).exclude(status='RETIRED').order_by('quantity')
         low_stock_data = ItemSerializer(low_stock_items, many=True).data
 
         # Category breakdown
-        from django.db.models import Count
         category_counts = dict(
             inv_qs.values_list('category').annotate(count=Count('id')).values_list('category', 'count')
         )
 
-        # Request stats (scoped by role via the Request queryset)
+        # Request stats (scoped by role) — single aggregate query.
         now = timezone.now()
         if request.user.role in ['STAFF', 'ADMIN']:
             req_qs = Request.objects.all()
         else:
             req_qs = Request.objects.filter(requested_by=request.user)
-        overdue_qs = req_qs.filter(
-            status__in=['APPROVED', 'COMPLETED'],
-            expected_return__lt=now,
+        overdue_q = Q(status__in=OUTSTANDING_STATUSES, expected_return__lt=now)
+        request_stats = req_qs.aggregate(
+            total=Count('id'),
+            pending=Count('id', filter=Q(status='PENDING')),
+            approved=Count('id', filter=Q(status='APPROVED')),
+            completed=Count('id', filter=Q(status='COMPLETED')),
+            rejected=Count('id', filter=Q(status='REJECTED')),
+            returned=Count('id', filter=Q(status='RETURNED')),
+            overdue=Count('id', filter=overdue_q),
+            highPriority=Count('id', filter=Q(priority='HIGH', status='PENDING')),
         )
-        request_stats = {
-            'total': req_qs.count(),
-            'pending': req_qs.filter(status='PENDING').count(),
-            'approved': req_qs.filter(status='APPROVED').count(),
-            'completed': req_qs.filter(status='COMPLETED').count(),
-            'rejected': req_qs.filter(status='REJECTED').count(),
-            'returned': req_qs.filter(status='RETURNED').count(),
-            'overdue': overdue_qs.count(),
-            'highPriority': req_qs.filter(priority='HIGH', status='PENDING').count(),
-        }
 
         return Response({
             'inventoryStats': inventory_stats,

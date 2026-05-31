@@ -1,21 +1,18 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Plus, MagnifyingGlass as Search, Check, X, Clock, CheckCircle, Package, Lock, Eye, FileText, User, CalendarBlank as Calendar, ArrowCounterClockwise as RotateCcw, Trash as Trash2, Warning as AlertTriangle, Timer, Prohibit as Ban, CaretDown as ChevronDown, CaretRight as ChevronRight, Flag } from '@phosphor-icons/react';
-import { Button, Input, Card, Modal, Table, CommentBox } from '../components/ui';
+import { Button, Input, Card, Modal, Table } from '../components/ui';
 import { StaffOnly } from '../components/auth';
 import { useRequests, useInventory, useIsMobile } from '../hooks';
 import useAuthStore from '../store/authStore';
 import { hasMinRole, ROLES } from '../utils/roles';
 import { useLocation } from 'react-router-dom';
 
-// Polling interval for comment refresh while the request detail modal is open.
-// Keep it gentle — too aggressive and we'd hammer the API.
-const COMMENT_POLL_INTERVAL_MS = 5000;
-
 const statusColors = {
     PENDING: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
     APPROVED: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
     REJECTED: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
     COMPLETED: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+    RETURN_PENDING: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300',
     RETURNED: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
     CANCELLED: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300',
 };
@@ -39,10 +36,12 @@ const PriorityBadge = ({ priority }) => {
 // Row of action buttons shared by mobile and desktop request views.
 // Compact mode (mobile) uses smaller icons and adds text labels next to the
 // primary actions; desktop renders icon-only with bigger hit targets.
-const RequestActionButtons = ({ request, isOwn, isStaffPlus, compact, onView, onApprove, onReject, onCancel, onReturn }) => {
+const RequestActionButtons = ({ request, isOwn, isStaffPlus, compact, onView, onApprove, onReject, onCancel, onReturn, onConfirmReturn, onCancelReturn }) => {
     const iconSize = compact ? 14 : 16;
     const isPending = request.status === 'PENDING';
-    const isReturnable = (request.status === 'APPROVED' || request.status === 'COMPLETED') && request.isReturnable;
+    // Borrower OR staff can START a return (step 1). Only staff CONFIRM it (step 2).
+    const canStartReturn = (request.status === 'APPROVED' || request.status === 'COMPLETED') && request.isReturnable && (isOwn || isStaffPlus);
+    const isReturnPending = request.status === 'RETURN_PENDING';
 
     return (
         <div className={compact ? 'flex gap-1 pt-1' : 'flex justify-end gap-1'}>
@@ -64,9 +63,22 @@ const RequestActionButtons = ({ request, isOwn, isStaffPlus, compact, onView, on
                     </Button>
                 </>
             )}
-            {isReturnable && isStaffPlus && (
-                <Button variant="ghost" size="sm" onClick={onReturn} className="text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-900/20" title="Return Item">
-                    <RotateCcw size={iconSize} />
+            {canStartReturn && (
+                <Button variant="ghost" size="sm" onClick={onReturn} className="text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-900/20" title="Return item">
+                    <RotateCcw size={iconSize} />{compact && <span className="text-xs ml-1">Return</span>}
+                </Button>
+            )}
+            {isReturnPending && isStaffPlus && (
+                <Button variant="ghost" size="sm" onClick={onConfirmReturn} className="text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20" title="Confirm the item was physically received">
+                    <Check size={iconSize} />{compact ? <span className="text-xs ml-1">Confirm received</span> : <span className="text-xs ml-1 hidden lg:inline">Confirm</span>}
+                </Button>
+            )}
+            {isReturnPending && isOwn && !isStaffPlus && (
+                <span className="self-center px-1.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">Awaiting staff confirmation</span>
+            )}
+            {isReturnPending && (isOwn || isStaffPlus) && (
+                <Button variant="ghost" size="sm" onClick={onCancelReturn} className="text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700" title="Cancel this pending return">
+                    <Ban size={iconSize} />{compact && <span className="text-xs ml-1">Cancel</span>}
                 </Button>
             )}
         </div>
@@ -126,23 +138,23 @@ const RequestDesktopRow = ({ request, isOwn, ...actions }) => (
 // Responsive layout: cards on mobile, table on desktop. This thin router
 // hands each request off to the appropriate row component and forwards the
 // callbacks each row needs.
-const RequestGroupBody = ({ groupRequests, user, isStaffPlus, handleApprove, handleRejectClick, handleCancelClick, returnRequest, setDetailRequest, setDetailModalOpen, getComments, setDetailComments }) => {
+const RequestGroupBody = ({ groupRequests, user, isStaffPlus, handleApprove, handleRejectClick, handleCancelClick, returnRequest, confirmReturn, cancelReturn, setDetailRequest, setDetailModalOpen }) => {
     const isMobile = useIsMobile();
 
     const rowProps = (request) => ({
         request,
         isOwn: request.requestedById === user?.id,
         isStaffPlus,
-        onView: async () => {
+        onView: () => {
             setDetailRequest(request);
             setDetailModalOpen(true);
-            const cmts = await getComments(request.id);
-            setDetailComments(cmts);
         },
         onApprove: () => handleApprove(request.id),
         onReject: () => handleRejectClick(request.id),
         onCancel: () => handleCancelClick(request.id),
         onReturn: () => returnRequest(request.id),
+        onConfirmReturn: () => confirmReturn(request.id),
+        onCancelReturn: () => cancelReturn(request.id),
     });
 
     if (isMobile) {
@@ -182,10 +194,10 @@ const Requests = () => {
         rejectRequest,
         cancelRequest,
         returnRequest,
+        confirmReturn,
+        cancelReturn,
         clearCompleted,
         createRequest,
-        addComment,
-        getComments,
         checkOverdue
     } = useRequests();
     const { getAccessibleItems, fetchInventory } = useInventory();
@@ -209,29 +221,6 @@ const Requests = () => {
 
     const [detailModalOpen, setDetailModalOpen] = useState(false);
     const [detailRequest, setDetailRequest] = useState(null);
-    const [detailComments, setDetailComments] = useState([]);
-    const [commentLoading, setCommentLoading] = useState(false);
-
-    // poll ng comments every 5 seconds habang bukas yung modal
-    // TODO: gawing websocket 'to kapag may oras na, ang bagal ng polling eh
-    useEffect(() => {
-        if (!detailModalOpen || !detailRequest?.id) return;
-        const pollInterval = setInterval(async () => {
-            try {
-                const cmts = await getComments(detailRequest.id);
-                setDetailComments(prev => {
-                    // Only update if comment count changed to avoid flicker
-                    if (prev.length !== cmts.length) return cmts;
-                    // Check if latest comment differs
-                    const lastPrev = prev[prev.length - 1];
-                    const lastNew = cmts[cmts.length - 1];
-                    if (lastPrev?.id !== lastNew?.id) return cmts;
-                    return prev;
-                });
-            } catch { /* silent */ }
-        }, COMMENT_POLL_INTERVAL_MS);
-        return () => clearInterval(pollInterval);
-    }, [detailModalOpen, detailRequest?.id, getComments]);
 
     // para ma-collapse/expand yung mga status sections
     const [collapsedSections, setCollapsedSections] = useState({});
@@ -474,6 +463,7 @@ const Requests = () => {
                         <option value="">All Status</option>
                         <option value="PENDING">Pending</option>
                         <option value="APPROVED">Approved</option>
+                        <option value="RETURN_PENDING">Return Pending</option>
                         <option value="REJECTED">Rejected</option>
                         <option value="COMPLETED">Completed</option>
                         <option value="RETURNED">Returned</option>
@@ -503,6 +493,7 @@ const Requests = () => {
                     { key: 'OVERDUE', label: 'Overdue', icon: AlertTriangle, color: 'bg-orange-500', textColor: 'text-orange-700', bgLight: 'bg-orange-50 dark:bg-orange-900/10', borderColor: 'border-orange-200 dark:border-orange-800/30', filter: r => r.isOverdue },
                     { key: 'PENDING', label: 'Pending', icon: Clock, color: 'bg-amber-500', textColor: 'text-amber-700', bgLight: 'bg-amber-50 dark:bg-amber-900/10', borderColor: 'border-amber-200 dark:border-amber-800/30', filter: r => r.status === 'PENDING' && !r.isOverdue },
                     { key: 'APPROVED', label: 'Approved', icon: CheckCircle, color: 'bg-emerald-500', textColor: 'text-emerald-700', bgLight: 'bg-emerald-50 dark:bg-emerald-900/10', borderColor: 'border-emerald-200 dark:border-emerald-800/30', filter: r => r.status === 'APPROVED' && !r.isOverdue },
+                    { key: 'RETURN_PENDING', label: 'Return Pending', icon: RotateCcw, color: 'bg-indigo-500', textColor: 'text-indigo-700', bgLight: 'bg-indigo-50 dark:bg-indigo-900/10', borderColor: 'border-indigo-200 dark:border-indigo-800/30', filter: r => r.status === 'RETURN_PENDING' && !r.isOverdue },
                     { key: 'COMPLETED', label: 'Completed', icon: Check, color: 'bg-blue-500', textColor: 'text-blue-700', bgLight: 'bg-blue-50 dark:bg-blue-900/10', borderColor: 'border-blue-200 dark:border-blue-800/30', filter: r => r.status === 'COMPLETED' && !r.isOverdue },
                     { key: 'RETURNED', label: 'Returned', icon: RotateCcw, color: 'bg-purple-500', textColor: 'text-purple-700', bgLight: 'bg-purple-50 dark:bg-purple-900/10', borderColor: 'border-purple-200 dark:border-purple-800/30', filter: r => r.status === 'RETURNED' },
                     { key: 'REJECTED', label: 'Rejected', icon: X, color: 'bg-red-500', textColor: 'text-red-700', bgLight: 'bg-red-50 dark:bg-red-900/10', borderColor: 'border-red-200 dark:border-red-800/30', filter: r => r.status === 'REJECTED' },
@@ -553,10 +544,10 @@ const Requests = () => {
                                     handleRejectClick={handleRejectClick}
                                     handleCancelClick={handleCancelClick}
                                     returnRequest={returnRequest}
+                                    confirmReturn={confirmReturn}
+                                    cancelReturn={cancelReturn}
                                     setDetailRequest={setDetailRequest}
                                     setDetailModalOpen={setDetailModalOpen}
-                                    getComments={getComments}
-                                    setDetailComments={setDetailComments}
                                 />
                             )}
                         </div>
@@ -759,7 +750,7 @@ const Requests = () => {
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
                                 <span className={`px-3 py-1 rounded-full text-sm font-medium ${statusColors[detailRequest.status]}`}>
-                                    {detailRequest.status}
+                                    {detailRequest.status?.replace('_', ' ')}
                                 </span>
                                 <PriorityBadge priority={detailRequest.priority} />
                                 {detailRequest.isOverdue && (
@@ -865,25 +856,6 @@ const Requests = () => {
                                 </p>
                             </div>
                         )}
-
-                        {/* Comments */}
-                        <div className="border-t dark:border-gray-600 pt-4">
-                            <CommentBox
-                                comments={detailComments}
-                                currentUserId={user?.id}
-                                loading={commentLoading}
-                                onAddComment={async (text) => {
-                                    setCommentLoading(true);
-                                    const result = await addComment(detailRequest.id, text);
-                                    if (result.success) {
-                                        // Refresh comments from API to get full author data
-                                        const cmts = await getComments(detailRequest.id);
-                                        setDetailComments(cmts);
-                                    }
-                                    setCommentLoading(false);
-                                }}
-                            />
-                        </div>
 
                         {/* Actions */}
                         <div className="flex gap-3 pt-4 border-t dark:border-gray-600">

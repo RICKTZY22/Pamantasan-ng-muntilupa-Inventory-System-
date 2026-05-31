@@ -1,6 +1,6 @@
 import React from 'react';
 import { User, Camera, Envelope as Mail, Phone, Buildings as Building, FloppyDisk as Save, Hash } from '@phosphor-icons/react';
-import { Button, Input } from '../../components/ui';
+import { Button, Input, Avatar } from '../../components/ui';
 import { getRoleLabel, getRoleBadgeColor } from '../../utils/roles';
 import { isValidEmail } from '../../utils/validators';
 
@@ -11,17 +11,7 @@ const ProfileTab = ({ user, profileForm, setProfileForm, handleProfileSave, upda
             {/* Avatar Section */}
             <div className="flex items-center gap-6 p-5 sm:p-6 bg-gray-50 dark:bg-gray-800/60 rounded-2xl border border-gray-200 dark:border-gray-700/60">
                 <div className="relative">
-                    {user?.avatar ? (
-                        <img
-                            src={user.avatar}
-                            alt="Profile"
-                            className="w-24 h-24 rounded-full object-cover ring-4 ring-accent/20"
-                        />
-                    ) : (
-                        <div className="w-24 h-24 rounded-full bg-gradient-to-br from-accent to-secondary flex items-center justify-center text-white text-3xl font-bold">
-                            {user?.fullName?.charAt(0) || 'U'}
-                        </div>
-                    )}
+                    <Avatar src={user?.avatar} name={user?.fullName} size={96} gradient="from-accent to-secondary" className="ring-4 ring-accent/20" />
                     <label className="absolute bottom-0 right-0 w-8 h-8 bg-white dark:bg-gray-700 rounded-full shadow-lg flex items-center justify-center hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors cursor-pointer">
                         <Camera size={16} className="text-gray-600 dark:text-gray-300" />
                         <span className="sr-only">Upload profile photo</span>

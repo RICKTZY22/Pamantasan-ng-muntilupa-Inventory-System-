@@ -13,6 +13,9 @@ class Request(models.Model):
         APPROVED = 'APPROVED', 'Approved'
         REJECTED = 'REJECTED', 'Rejected'
         COMPLETED = 'COMPLETED', 'Completed'
+        # Borrower has signalled a return; awaiting staff confirmation of
+        # physical receipt before it counts as actually returned.
+        RETURN_PENDING = 'RETURN_PENDING', 'Return Pending'
         RETURNED = 'RETURNED', 'Returned'
         CANCELLED = 'CANCELLED', 'Cancelled'
 
@@ -67,6 +70,19 @@ class Request(models.Model):
     )
     approved_at = models.DateTimeField(null=True, blank=True)
     rejection_reason = models.TextField(blank=True)
+
+    # Two-step return handshake: the borrower (or staff) requests a return,
+    # then a staff/admin confirms physical receipt. This prevents a single
+    # accidental click from closing out an item that was never handed back.
+    return_requested_at = models.DateTimeField(null=True, blank=True)
+    return_requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='return_requests',
+    )
+    return_confirmed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='confirmed_returns',
+    )
     returned_at = models.DateTimeField(null=True, blank=True)
 
     # Soft-delete: cleared requests stay in DB for reports/charts
@@ -83,31 +99,6 @@ class Request(models.Model):
 
     def __str__(self):
         return f"{self.item_name} - {self.requested_by.get_full_name()} ({self.status})"
-
-
-class Comment(models.Model):
-    """Comment sa request — para makapag-usap yung staff at borrower."""
-    # TODO: mag-add ng edit history para alam kung in-edit yung comment
-
-    request = models.ForeignKey(
-        Request,
-        on_delete=models.CASCADE,
-        related_name='comments',
-    )
-    author = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='comments',
-    )
-    text = models.TextField()
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = 'request_comments'
-        ordering = ['created_at']
-
-    def __str__(self):
-        return f"Comment by {self.author.get_full_name()} on {self.request}"
 
 
 class Notification(models.Model):

@@ -6,16 +6,10 @@ import {
     Wrench,
     Bell,
     Palette,
-    Users,
     Lock,
     GraduationCap,
     Briefcase,
     SlidersHorizontal as Sliders,
-    Envelope as Mail,
-    Buildings as Building,
-    Plus,
-    Trash as Trash2,
-    Warning as AlertTriangle,
     ArrowLeft,
     SignOut as LogOut,
     ClockCounterClockwise as History,
@@ -24,11 +18,9 @@ import {
     X
 } from '@phosphor-icons/react';
 import { motion, useReducedMotion } from 'motion/react';
-import { Button, Input, Modal, PasswordStrengthMeter } from '../components/ui';
-import { isPlmunEmail } from '../utils/validators';
+import { Button } from '../components/ui';
 import useAuthStore from '../store/authStore';
 import useUIStore from '../store/uiStore';
-import { useUsers } from '../hooks';
 import { useIsMobile } from '../hooks';
 import { ROLES } from '../utils/roles';
 import { formatApiError } from '../utils/errorUtils';
@@ -41,7 +33,6 @@ import AppearanceTab from './settings/AppearanceTab';
 import FacultyTab from './settings/FacultyTab';
 import StaffTab from './settings/StaffTab';
 import SystemTab from './settings/SystemTab';
-import UsersTab from './settings/UsersTab';
 import AdminTab from './settings/AdminTab';
 import HistoryTab from './settings/HistoryTab';
 import PreferencesTab from './settings/PreferencesTab';
@@ -57,7 +48,6 @@ const settingsTabs = [
     { id: 'staff', label: 'Inventory', icon: Briefcase, minRole: ROLES.STAFF, desc: 'Defaults for managing inventory' },
     { id: 'system', label: 'System', icon: Wrench, minRole: ROLES.STAFF, desc: 'Categories and item conditions' },
     { id: 'history', label: 'History & Flags', icon: History, minRole: ROLES.STAFF, desc: 'Request history and flagged accounts' },
-    { id: 'users', label: 'Users', icon: Users, minRole: ROLES.ADMIN, desc: 'Create and manage user accounts' },
     { id: 'admin', label: 'Administration', icon: Shield, minRole: ROLES.ADMIN, desc: 'Maintenance, audit logs, and backups' },
 ];
 
@@ -66,7 +56,6 @@ const MotionDiv = motion.div;
 const Settings = () => {
     const { user, updateProfile, updateAvatar, changePassword, isLoading, hasMinRole, logout } = useAuthStore();
     const { theme, setTheme, backgroundEffect, setBackgroundEffect, viewMode, setViewMode, itemsPerPage, setItemsPerPage, showImages, setShowImages } = useUIStore();
-    const { users, loading: usersLoading, fetchUsers, updateUserRole, toggleUserStatus, deleteUser: deleteUserAPI, unflagUser } = useUsers();
     const isMobile = useIsMobile();
     const reduce = useReducedMotion();
     // sa mobile: null = menu list, string = tab content
@@ -86,23 +75,6 @@ const Settings = () => {
         // reset the open tab on every navigation.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isMobile]);
-    const [showDeleteModal, setShowDeleteModal] = useState(false);
-    const [selectedUser, setSelectedUser] = useState(null);
-    const [showCreateUserModal, setShowCreateUserModal] = useState(false);
-    const [createUserForm, setCreateUserForm] = useState({
-        fullName: '', email: '', username: '', password: '', password2: '',
-        role: 'STUDENT', department: '',
-    });
-    const [createUserError, setCreateUserError] = useState('');
-    const [createUserLoading, setCreateUserLoading] = useState(false);
-
-    // fetch users pag binuksan yung admin tab
-    useEffect(() => {
-        if (activeTab === 'users' && hasMinRole(ROLES.ADMIN)) {
-            fetchUsers();
-        }
-    }, [activeTab, fetchUsers, hasMinRole]);
-
     // i-filter yung tabs based sa role
     const visibleTabs = settingsTabs.filter(tab => {
         if (tab.exactRole) return user?.role === tab.exactRole;
@@ -217,7 +189,6 @@ const Settings = () => {
     }, []);
     const [backupLoading, setBackupLoading] = useState(false);
     const [passwordError, setPasswordError] = useState('');
-    const [unflagConfirmId, setUnflagConfirmId] = useState(null);
 
     // Load all saved settings from localStorage on mount
     useEffect(() => {
@@ -325,40 +296,6 @@ const Settings = () => {
         localStorage.setItem('audit-last-auto-export', String(Date.now()));
     };
 
-    const handleCreateUser = async () => {
-        setCreateUserError('');
-        const { fullName, email, username, password, password2, role, department } = createUserForm;
-        if (!fullName || !email || !username || !password) {
-            setCreateUserError('Full name, email, username, and password are required.');
-            return;
-        }
-        if (password !== password2) {
-            setCreateUserError('Passwords do not match.');
-            return;
-        }
-        if (!email.trim().toLowerCase().endsWith('@plmun.edu.ph')) {
-            setCreateUserError('Only @plmun.edu.ph email addresses are allowed.');
-            return;
-        }
-        if (password.length < 6) {
-            setCreateUserError('Password must be at least 6 characters.');
-            return;
-        }
-        try {
-            setCreateUserLoading(true);
-            await api.post('/auth/register/', { fullName, email, username, password, password2, role, department });
-            flashMessage(`✓ Account created for ${fullName} (${role})`, 4000);
-            setShowCreateUserModal(false);
-            setCreateUserForm({ fullName: '', email: '', username: '', password: '', password2: '', role: 'STUDENT', department: '' });
-            fetchUsers();
-        } catch (err) {
-            const msg = formatApiError(err, 'Failed to create account.');
-            setCreateUserError(msg || 'Failed to create account.');
-        } finally {
-            setCreateUserLoading(false);
-        }
-    };
-
     const handleProfileSave = async () => {
         await updateProfile(profileForm);
     };
@@ -377,30 +314,6 @@ const Settings = () => {
         setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
     };
 
-    const handleToggleUserStatus = async (userId) => {
-        await toggleUserStatus(userId);
-    };
-
-    const handleDeleteUser = async (userId) => {
-        await deleteUserAPI(userId);
-        setShowDeleteModal(false);
-        setSelectedUser(null);
-    };
-
-    const handleRoleChange = async (userId, newRole) => {
-        await updateUserRole(userId, newRole);
-    };
-
-    const handleUnflagUser = async (userId) => {
-        const result = await unflagUser(userId);
-        if (result.success) {
-            flashMessage(result.message || 'User unflagged successfully!');
-            fetchUsers();
-        } else {
-            flashMessage(`✗ Failed to unflag user: ${result.error}`, 5000);
-        }
-        setUnflagConfirmId(null);
-    };
 
     const handleBackupNow = async () => {
         if (backupLoading) return;
@@ -531,23 +444,6 @@ const Settings = () => {
                     />
                 );
 
-            case 'users':
-                return (
-                    <UsersTab
-                        users={users}
-                        loading={usersLoading}
-                        handleToggleUserStatus={handleToggleUserStatus}
-                        handleRoleChange={handleRoleChange}
-                        handleUnflagUser={handleUnflagUser}
-                        setSelectedUser={setSelectedUser}
-                        setShowDeleteModal={setShowDeleteModal}
-                        setShowCreateUserModal={setShowCreateUserModal}
-                        setCreateUserError={setCreateUserError}
-                        unflagConfirmId={unflagConfirmId}
-                        setUnflagConfirmId={setUnflagConfirmId}
-                    />
-                );
-
             case 'history':
                 return <HistoryTab />;
 
@@ -560,7 +456,6 @@ const Settings = () => {
                         flashMessage={flashMessage}
                         saveSettings={saveSettings}
                         adminPrefsKey={adminPrefsKey}
-                        users={users}
                         auditLogs={auditLogs}
                         auditLogsLoading={auditLogsLoading}
                         fetchAuditLogs={fetchAuditLogs}
@@ -595,97 +490,6 @@ const Settings = () => {
             </div>
         );
     };
-
-    const renderModals = () => (
-        <>
-            {/* Create User Modal */}
-            <Modal
-                isOpen={showCreateUserModal}
-                onClose={() => { setShowCreateUserModal(false); setCreateUserError(''); }}
-                title="Create New Account"
-            >
-                <div className="space-y-4">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <Input label="Full Name" icon={User} placeholder="Juan Dela Cruz" value={createUserForm.fullName} onChange={(e) => setCreateUserForm({ ...createUserForm, fullName: e.target.value })} autoComplete="off" />
-                        <Input label="Email" icon={Mail} type="email" placeholder="juan@plmun.edu.ph" value={createUserForm.email} error={createUserForm.email && !isPlmunEmail(createUserForm.email) ? 'Use a @plmun.edu.ph email' : ''} onChange={(e) => setCreateUserForm({ ...createUserForm, email: e.target.value })} autoComplete="off" />
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <Input label="Username" icon={User} placeholder="juandelacruz" value={createUserForm.username} onChange={(e) => setCreateUserForm({ ...createUserForm, username: e.target.value })} autoComplete="off" />
-                        <Input label="Department" icon={Building} placeholder="e.g., CIT" value={createUserForm.department} onChange={(e) => setCreateUserForm({ ...createUserForm, department: e.target.value })} autoComplete="off" />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Role</label>
-                        <select value={createUserForm.role} onChange={(e) => setCreateUserForm({ ...createUserForm, role: e.target.value })} className="w-full px-3 py-2.5 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary">
-                            <option value="STUDENT">Student</option>
-                            <option value="FACULTY">Faculty</option>
-                            <option value="STAFF">Staff</option>
-                            <option value="ADMIN">Admin</option>
-                        </select>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                            <Input label="Password" icon={Lock} type="password" placeholder="Min 6 characters" value={createUserForm.password} onChange={(e) => setCreateUserForm({ ...createUserForm, password: e.target.value })} />
-                            <PasswordStrengthMeter password={createUserForm.password} />
-                        </div>
-                        <Input
-                            label="Confirm Password"
-                            icon={Lock}
-                            type="password"
-                            placeholder="Re-enter password"
-                            value={createUserForm.password2}
-                            error={createUserForm.password2 && createUserForm.password !== createUserForm.password2 ? 'Passwords do not match' : ''}
-                            onChange={(e) => setCreateUserForm({ ...createUserForm, password2: e.target.value })}
-                        />
-                    </div>
-                    {createUserError && <p className="text-sm text-red-600 bg-red-50 dark:bg-red-900/20 dark:text-red-400 px-3 py-2 rounded-lg">{createUserError}</p>}
-                    <div className="flex gap-3 justify-end pt-2">
-                        <Button variant="ghost" onClick={() => { setShowCreateUserModal(false); setCreateUserError(''); }}>Cancel</Button>
-                        <Button
-                            icon={Plus}
-                            onClick={handleCreateUser}
-                            loading={createUserLoading}
-                            disabled={
-                                (createUserForm.email && !isPlmunEmail(createUserForm.email)) ||
-                                (createUserForm.password2 && createUserForm.password !== createUserForm.password2)
-                            }
-                        >
-                            Create Account
-                        </Button>
-                    </div>
-                </div>
-            </Modal>
-
-            {/* Delete Confirmation Modal */}
-            <Modal
-                isOpen={showDeleteModal}
-                onClose={() => { setShowDeleteModal(false); setSelectedUser(null); }}
-                title="Delete User Account"
-            >
-                <div>
-                    <div className="flex items-center gap-4 mb-4">
-                        <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center">
-                            <AlertTriangle className="w-6 h-6 text-red-500" />
-                        </div>
-                        <div>
-                            <h3 className="font-semibold text-gray-800 dark:text-white">Are you sure?</h3>
-                            <p className="text-sm text-gray-500 dark:text-gray-400">This action cannot be undone.</p>
-                        </div>
-                    </div>
-                    {selectedUser && (
-                        <div className="bg-gray-50 dark:bg-gray-700/50 rounded-xl p-4 mb-6">
-                            <p className="text-sm text-gray-600 dark:text-gray-300">
-                                You are about to delete the account for <span className="font-semibold">{selectedUser.fullName}</span> ({selectedUser.email}).
-                            </p>
-                        </div>
-                    )}
-                    <div className="flex gap-3 justify-end">
-                        <Button variant="ghost" onClick={() => { setShowDeleteModal(false); setSelectedUser(null); }}>Cancel</Button>
-                        <Button variant="danger" icon={Trash2} onClick={() => handleDeleteUser(selectedUser?.id)}>Delete Account</Button>
-                    </div>
-                </div>
-            </Modal>
-        </>
-    );
 
     // Mobile: show menu OR detail, never both
     if (isMobile) {
@@ -722,9 +526,6 @@ const Settings = () => {
                     >
                         {renderTabContent()}
                     </MotionDiv>
-
-                    {/* Modals */}
-                    {renderModals()}
                 </div>
             );
         }
@@ -766,9 +567,6 @@ const Settings = () => {
                     </div>
                     <span className="flex-1 font-medium text-sm text-red-600 dark:text-red-400">Log Out</span>
                 </button>
-
-                {/* Modals */}
-                {renderModals()}
             </div>
         );
     }
@@ -794,12 +592,15 @@ const Settings = () => {
                     <div className="relative px-1 pt-1 pb-2">
                         <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
                         <input
-                            type="text"
+                            type="search"
+                            name="settings-search"
+                            autoComplete="off"
+                            inputMode="search"
                             value={navQuery}
                             onChange={(e) => setNavQuery(e.target.value)}
                             placeholder="Search settings"
                             aria-label="Search settings"
-                            className="w-full pl-8 pr-8 py-1.5 text-sm rounded-md bg-gray-100/70 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-700/60 text-gray-900 dark:text-gray-100 placeholder:text-gray-400 outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/60"
+                            className="w-full pl-8 pr-8 py-1.5 text-sm rounded-md bg-gray-100/70 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-700/60 text-gray-900 dark:text-gray-100 placeholder:text-gray-400 outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/60 [&::-webkit-search-cancel-button]:hidden"
                         />
                         {navQuery && (
                             <button
@@ -861,9 +662,6 @@ const Settings = () => {
                     </MotionDiv>
                 </div>
             </div>
-
-            {/* Modals */}
-            {renderModals()}
         </div>
     );
 };

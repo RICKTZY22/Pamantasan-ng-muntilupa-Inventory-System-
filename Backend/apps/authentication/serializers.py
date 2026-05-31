@@ -21,7 +21,9 @@ class UserSerializer(serializers.ModelSerializer):
             'isActive', 'date_joined', 'last_login',
             'isFlagged', 'overdueCount',
         ]
-        read_only_fields = ['id', 'date_joined', 'last_login']
+        # Role changes must pass through UserViewSet.role() so admin-safety
+        # checks cannot be bypassed by the generic user update endpoint.
+        read_only_fields = ['id', 'role', 'date_joined', 'last_login']
 
     def get_fullName(self, obj) -> str:
         return obj.get_full_name() or obj.username
@@ -59,6 +61,18 @@ class RegisterSerializer(serializers.ModelSerializer):
             )
         return value.strip().lower()
 
+    def validate_role(self, value):
+        """Public self-registration must not grant elevated roles.
+        Admin-created accounts still use this serializer, so authenticated
+        admins may assign any valid role through the user-management flow.
+        """
+        actor = getattr(self.context.get('request'), 'user', None)
+        if actor and actor.is_authenticated and actor.is_admin:
+            return value
+        if value != User.Role.STUDENT:
+            raise serializers.ValidationError('Only administrators can assign non-student roles.')
+        return User.Role.STUDENT
+
     def validate(self, attrs):
         if attrs['password'] != attrs['password2']:
             raise serializers.ValidationError({'password': 'Passwords do not match.'})
@@ -78,7 +92,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             password=validated_data['password'],
             first_name=first_name,
             last_name=last_name,
-            role=validated_data.get('role', 'STUDENT'),
+            role=validated_data.get('role', User.Role.STUDENT),
             department=validated_data.get('department', ''),
             student_id=validated_data.get('student_id', ''),
         )

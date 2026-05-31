@@ -178,7 +178,7 @@ const Reports = () => {
             const monthName = monthStart.toLocaleString('default', { month: 'short' });
 
             // For each request, determine the relevant date and status bucket
-            let approved = 0, rejected = 0, pending = 0;
+            let approved = 0, rejected = 0, pending = 0, overdue = 0;
             requests.forEach(r => {
                 // Pick the most relevant date for this request's current status
                 let relevantDate;
@@ -197,6 +197,16 @@ const Reports = () => {
                         pending++;
                     }
                 }
+
+                // Overdue is bucketed by the month its return was due (not the
+                // approval month), gated on the same backend `isOverdue` flag the
+                // metric card and Requests page use, so the numbers stay in sync.
+                if (r.isOverdue && r.expectedReturn) {
+                    const returnDate = new Date(r.expectedReturn);
+                    if (returnDate >= monthStart && returnDate < monthEnd) {
+                        overdue++;
+                    }
+                }
             });
 
             const total = approved + rejected;
@@ -205,6 +215,7 @@ const Reports = () => {
                 approved,
                 rejected,
                 pending,
+                overdue,
                 approvalRate: total > 0 ? Math.round((approved / total) * 100) : 0,
             });
         }
@@ -281,25 +292,23 @@ const Reports = () => {
         ].filter(d => d.value > 0);
     }, [filteredRequests]);
 
-    // Overdue requests from filtered data
+    // Overdue requests — uses the backend `isOverdue` flag (the single source of
+    // truth shared with the Requests page and Dashboard) over ALL requests.
+    // Overdue is a "current state" condition, so it must NOT be scoped by the
+    // report's creation-date range: an overdue borrow is almost always an older
+    // request, which the date filter would otherwise hide (showing a false 0).
     const overdueRequests = useMemo(() => {
-        if (filteredRequests.length === 0) return [];
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        return filteredRequests
-            .filter(r => {
-                if (!['APPROVED', 'COMPLETED'].includes(r.status)) return false;
-                if (!r.expectedReturn) return false;
-                const returnDate = new Date(r.expectedReturn);
-                return returnDate < today;
-            })
+        if (!requests || requests.length === 0) return [];
+        const now = new Date();
+        return requests
+            .filter(r => r.isOverdue && r.expectedReturn)
             .map(r => {
                 const returnDate = new Date(r.expectedReturn);
-                const daysOverdue = Math.floor((today - returnDate) / (1000 * 60 * 60 * 24));
+                const daysOverdue = Math.max(0, Math.floor((now - returnDate) / (1000 * 60 * 60 * 24)));
                 return { ...r, daysOverdue };
             })
             .sort((a, b) => b.daysOverdue - a.daysOverdue);
-    }, [filteredRequests]);
+    }, [requests]);
 
     const isLoading = inventoryLoading || requestsLoading;
     const periodLabel = { week: 'This Week', month: 'This Month', quarter: 'This Quarter', year: 'This Year', all: 'All Time' }[dateRange] || 'All Time';
@@ -777,6 +786,7 @@ const Reports = () => {
                                             { dataKey: 'approved', name: 'Approved', color: '#10b981' },
                                             { dataKey: 'rejected', name: 'Rejected', color: '#ef4444' },
                                             { dataKey: 'pending', name: 'Pending', color: '#f59e0b' },
+                                            { dataKey: 'overdue', name: 'Overdue', color: '#b91c1c' },
                                         ]}
                                         xAxisKey="month"
                                         title=""

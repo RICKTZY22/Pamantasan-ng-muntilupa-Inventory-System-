@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Plus, MagnifyingGlass as Search, Package, DownloadSimple as Download, Printer, FileText, MapPin, CaretDown as ChevronDown, CaretRight as ChevronRight, TrendDown as TrendingDown, CheckCircle, XCircle, Wrench, ArrowsClockwise as RefreshCw, Power, ArrowCounterClockwise as RotateCcw, PencilSimple as Edit, Trash as Trash2, QrCode, Warning as AlertTriangle, Star, Eye, ArrowRight, CalendarBlank as Calendar } from '@phosphor-icons/react';
-import { Button, Input, Card, Modal, Table, QRCodeModal } from '../components/ui';
+import { Plus, MagnifyingGlass as Search, Package, DownloadSimple as Download, Printer, FileText, MapPin, CheckCircle, Wrench, ArrowsClockwise as RefreshCw, Power, ArrowCounterClockwise as RotateCcw, PencilSimple as Edit, Trash as Trash2, QrCode, Star, Eye, ArrowRight, CalendarBlank as Calendar, DotsThree, SlidersHorizontal, StackSimple, Tag, ShieldCheck, ListBullets, SquaresFour } from '@phosphor-icons/react';
+import { Button, Modal, QRCodeModal } from '../components/ui';
 import { useInventory } from '../hooks';
 import { useIsMobile } from '../hooks';
 import { StaffOnly } from '../components/auth';
@@ -16,14 +16,22 @@ import {
     CATEGORY_BADGES,
     LOW_STOCK_THRESHOLD,
     STATUS_COLORS,
-    getPriorityBadgeClass,
-    getPriorityMarker,
-    getStockGroups,
 } from '../data/inventoryPresentation';
+
+const CATEGORY_OPTIONS = ['ELECTRONICS', 'FURNITURE', 'EQUIPMENT', 'SUPPLIES', 'OTHER'];
+const STATUS_OPTIONS = ['AVAILABLE', 'IN_USE', 'MAINTENANCE', 'RETIRED'];
+
+const compactNumber = (value = 0) => Number(value || 0).toLocaleString();
+
+const getStockLabel = (item) => {
+    if (item.quantity === 0) return { label: 'Out', className: 'text-red-600 bg-red-50 border-red-100 dark:bg-red-900/20 dark:border-red-800/50' };
+    if (item.quantity <= LOW_STOCK_THRESHOLD) return { label: 'Low', className: 'text-amber-700 bg-amber-50 border-amber-100 dark:bg-amber-900/20 dark:border-amber-800/50' };
+    return { label: 'Healthy', className: 'text-emerald-700 bg-emerald-50 border-emerald-100 dark:bg-emerald-900/20 dark:border-emerald-800/50' };
+};
 
 const Inventory = () => {
     const { inventory, loading, stats, fetchInventory, addItem, updateItem, deleteItem, changeItemStatus } = useInventory();
-    const { viewMode: storedViewMode, itemsPerPage, showImages } = useUIStore();
+    const { viewMode: storedViewMode, setViewMode, itemsPerPage, showImages } = useUIStore();
     const { user } = useAuthStore();
     const isMobile = useIsMobile();
     // Force card view on mobile - table is unusable on narrow screens
@@ -46,6 +54,7 @@ const Inventory = () => {
     const [editingItem, setEditingItem] = useState(null);
     const defaultFormData = {
         name: '',
+        brand: '',
         category: staffDefaults.defaultCategory || 'ELECTRONICS',
         quantity: 1,
         status: staffDefaults.defaultStatus || 'AVAILABLE',
@@ -64,7 +73,7 @@ const Inventory = () => {
     const [deleteModalOpen, setDeleteModalOpen] = useState(false);
     const [deleteItemId, setDeleteItemId] = useState(null);
     const [detailItem, setDetailItem] = useState(null);
-    const [collapsedSections, setCollapsedSections] = useState({});
+    const [selectedItemId, setSelectedItemId] = useState(null);
     const [searchParams, setSearchParams] = useSearchParams();
 
     // Auto-open item detail when navigating with ?item=ID (e.g. from dashboard low stock)
@@ -122,15 +131,35 @@ const Inventory = () => {
 
     // Pagination: slice the flat filtered list, then group the visible page
     const totalPages = Math.max(1, Math.ceil(filteredItems.length / itemsPerPage));
+
+    // Clamp the current page whenever the result set shrinks (delete, filter,
+    // or itemsPerPage change). Without this you can sit on a page past the last
+    // valid one: the grid renders empty while Prev/Next still walk ghost pages.
+    useEffect(() => {
+        if (currentPage > totalPages) {
+            setCurrentPage(totalPages);
+        }
+    }, [currentPage, totalPages]);
+
     const paginatedItems = useMemo(() => {
         const start = (currentPage - 1) * itemsPerPage;
         return filteredItems.slice(start, start + itemsPerPage);
     }, [filteredItems, currentPage, itemsPerPage]);
 
-    const stockGroups = useMemo(
-        () => getStockGroups({ XCircle, TrendingDown, CheckCircle }),
-        [],
-    );
+    const selectedItem = useMemo(() => (
+        paginatedItems.find(item => item.id === selectedItemId) || paginatedItems[0] || null
+    ), [paginatedItems, selectedItemId]);
+
+    useEffect(() => {
+        if (!paginatedItems.length) {
+            setSelectedItemId(null);
+            return;
+        }
+        if (!paginatedItems.some(item => item.id === selectedItemId)) {
+            setSelectedItemId(paginatedItems[0].id);
+        }
+    }, [paginatedItems, selectedItemId]);
+
     const navigate = useNavigate();
     const isStaffPlus = hasMinRole(user?.role, ROLES.STAFF);
 
@@ -160,8 +189,9 @@ const Inventory = () => {
         setEditingItem(item);
         setFormData({
             name: item.name || '',
+            brand: item.brand || '',
             category: item.category || 'ELECTRONICS',
-            quantity: item.quantity || 1,
+            quantity: item.quantity ?? 1,
             status: item.status || 'AVAILABLE',
             location: item.location || '',
             description: item.description || '',
@@ -169,7 +199,7 @@ const Inventory = () => {
             accessLevel: item.accessLevel || 'STUDENT',
             isReturnable: item.isReturnable !== undefined ? item.isReturnable : true,
             priority: item.priority || 'MEDIUM',
-            borrowDuration: item.borrowDuration || '',
+            borrowDuration: item.borrowDuration ?? '',
             borrowDurationUnit: item.borrowDurationUnit || 'DAYS',
         });
         setIsAddModalOpen(true);
@@ -254,9 +284,10 @@ const Inventory = () => {
 
     // Export to CSV
     const handleExportCSV = () => {
-        const headers = ['Name', 'Category', 'Quantity', 'Status', 'Location', 'Description', 'Date Added'];
+        const headers = ['Name', 'Brand', 'Category', 'Quantity', 'Status', 'Location', 'Description', 'Date Added'];
         const rows = inventory.map(item => [
             item.name || '',
+            item.brand || '',
             item.category || '',
             item.quantity || 0,
             item.status || '',
@@ -269,9 +300,10 @@ const Inventory = () => {
 
     // Export to PDF
     const handleExportPDF = () => {
-        const headers = ['Name', 'Category', 'Qty', 'Status', 'Location', 'Priority'];
+        const headers = ['Name', 'Brand', 'Category', 'Qty', 'Status', 'Location', 'Priority'];
         const rows = inventory.map(item => [
             item.name || '',
+            item.brand || '',
             item.category || '',
             item.quantity || 0,
             item.status || '',
@@ -353,336 +385,340 @@ const Inventory = () => {
 
     return (
         <>
-            <div className="space-y-6">
-                {/* Header */}
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                    <div>
-                        <h1 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white">Inventory</h1>
-                        <p className="text-gray-500 dark:text-gray-400 mt-0.5 text-sm">Manage your inventory items</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <StaffOnly>
-                            <button
-                                type="button"
-                                onClick={(e) => { e.stopPropagation(); handleExportCSV(); }}
-                                className="p-2 md:px-3 md:py-2 text-sm font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-xl hover:bg-gray-200 dark:hover:bg-gray-600 cursor-pointer flex items-center gap-1.5 transition-colors"
-                                title="Export CSV"
-                            >
-                                <Download size={16} />
-                                <span className="hidden md:inline">CSV</span>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={(e) => { e.stopPropagation(); handleExportPDF(); }}
-                                className="p-2 md:px-3 md:py-2 text-sm font-medium bg-primary/10 text-primary rounded-xl hover:bg-primary/20 cursor-pointer flex items-center gap-1.5 transition-colors"
-                                title="Export PDF"
-                            >
-                                <FileText size={16} />
-                                <span className="hidden md:inline">PDF</span>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={(e) => { e.stopPropagation(); handlePrint(); }}
-                                className="p-2 md:px-3 md:py-2 text-sm font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-xl hover:bg-gray-200 dark:hover:bg-gray-600 cursor-pointer flex items-center gap-1.5 transition-colors"
-                                title="Print"
-                            >
-                                <Printer size={16} />
-                                <span className="hidden md:inline">Print</span>
-                            </button>
-                        </StaffOnly>
-                        <StaffOnly>
-                            <Button icon={Plus} onClick={() => setIsAddModalOpen(true)}>
-                                Add Item
-                            </Button>
-                        </StaffOnly>
-                    </div>
-                </div>
+            <div className="space-y-4">
+                <section className="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900/80 overflow-hidden">
+                    <div className="flex flex-col gap-3 border-b border-gray-200 px-4 py-3 dark:border-gray-800 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                                <h1 className="text-2xl font-bold text-gray-950 dark:text-white">Inventory</h1>
+                                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-900/20 dark:text-emerald-300">
+                                    {compactNumber(filteredItems.length)} shown
+                                </span>
+                            </div>
+                            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Track stock, item status, access levels, and staff actions in one working view.</p>
+                        </div>
 
-                {/* Stats */}
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-2 md:gap-4">
-                    <Card className="relative overflow-hidden py-3 md:py-5 px-3 md:px-4">
-                        <div className="absolute top-0 right-0 w-20 h-20 bg-primary/5 dark:bg-primary/10 rounded-bl-full" />
-                        <Package size={18} className="text-primary mb-1.5" />
-                        <p className="text-lg md:text-2xl font-bold text-gray-900 dark:text-white">{stats.total}</p>
-                        <p className="text-xs md:text-sm text-gray-500 dark:text-gray-400">Total Items</p>
-                    </Card>
-                    <Card className="relative overflow-hidden py-3 md:py-5 px-3 md:px-4">
-                        <div className="absolute top-0 right-0 w-20 h-20 bg-emerald-500/5 dark:bg-emerald-500/10 rounded-bl-full" />
-                        <div className="w-4 h-4 md:w-5 md:h-5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mb-1.5">
-                            <div className="w-1.5 h-1.5 md:w-2 md:h-2 rounded-full bg-emerald-500" />
-                        </div>
-                        <p className="text-lg md:text-2xl font-bold text-emerald-600 dark:text-emerald-400">{stats.available}</p>
-                        <p className="text-xs md:text-sm text-gray-500 dark:text-gray-400">Available</p>
-                    </Card>
-                    <Card className="relative overflow-hidden py-3 md:py-5 px-3 md:px-4">
-                        <div className="absolute top-0 right-0 w-20 h-20 bg-blue-500/5 dark:bg-blue-500/10 rounded-bl-full" />
-                        <div className="w-4 h-4 md:w-5 md:h-5 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center mb-1.5">
-                            <div className="w-1.5 h-1.5 md:w-2 md:h-2 rounded-full bg-blue-500" />
-                        </div>
-                        <p className="text-lg md:text-2xl font-bold text-blue-600 dark:text-blue-400">{stats.inUse}</p>
-                        <p className="text-xs md:text-sm text-gray-500 dark:text-gray-400">In Use</p>
-                    </Card>
-                    <Card className="relative overflow-hidden py-3 md:py-5 px-3 md:px-4">
-                        <div className="absolute top-0 right-0 w-20 h-20 bg-amber-500/5 dark:bg-amber-500/10 rounded-bl-full" />
-                        <TrendingDown size={18} className="text-amber-500 mb-1.5" />
-                        <p className="text-lg md:text-2xl font-bold text-amber-600 dark:text-amber-400">{filteredItems.filter(i => i.quantity > 0 && i.quantity <= LOW_STOCK_THRESHOLD).length}</p>
-                        <p className="text-xs md:text-sm text-gray-500 dark:text-gray-400">Low Stock</p>
-                    </Card>
-                    <Card className="relative overflow-hidden py-3 md:py-5 px-3 md:px-4">
-                        <div className="absolute top-0 right-0 w-20 h-20 bg-red-500/5 dark:bg-red-500/10 rounded-bl-full" />
-                        <XCircle size={18} className="text-red-500 mb-1.5" />
-                        <p className="text-lg md:text-2xl font-bold text-red-600 dark:text-red-400">{filteredItems.filter(i => i.quantity === 0).length}</p>
-                        <p className="text-xs md:text-sm text-gray-500 dark:text-gray-400">Out of Stock</p>
-                    </Card>
-                </div>
-
-                {/* Filters */}
-                <Card>
-                    <div className="flex flex-col md:flex-row gap-2 md:gap-4">
-                        <div className="flex-1">
-                            <Input
-                                icon={Search}
-                                placeholder="Search items..."
-                                value={search}
-                                onChange={(e) => setSearch(e.target.value)}
-                            />
-                        </div>
-                        <div className="flex gap-2">
-                            <select
-                                className="flex-1 md:flex-none px-3 py-2.5 md:px-4 md:py-3 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl text-sm text-gray-700 dark:text-gray-200 focus:ring-2 focus:ring-primary outline-none transition-colors"
-                                value={filterCategory}
-                                onChange={(e) => setFilterCategory(e.target.value)}
-                            >
-                                <option value="">All Categories</option>
-                                <option value="ELECTRONICS">Electronics</option>
-                                <option value="FURNITURE">Furniture</option>
-                                <option value="EQUIPMENT">Equipment</option>
-                                <option value="SUPPLIES">Supplies</option>
-                                <option value="OTHER">Other</option>
-                            </select>
-                            <select
-                                className="flex-1 md:flex-none px-3 py-2.5 md:px-4 md:py-3 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl text-sm text-gray-700 dark:text-gray-200 focus:ring-2 focus:ring-primary outline-none transition-colors"
-                                value={filterStatus}
-                                onChange={(e) => setFilterStatus(e.target.value)}
-                            >
-                                <option value="">All Status</option>
-                                <option value="AVAILABLE">Available</option>
-                                <option value="IN_USE">In Use</option>
-                                <option value="MAINTENANCE">Maintenance</option>
-                                <option value="RETIRED">Retired</option>
-                            </select>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <div className="hidden rounded-md border border-gray-200 bg-gray-50 p-0.5 dark:border-gray-700 dark:bg-gray-800 md:flex">
+                                <button
+                                    type="button"
+                                    onClick={() => setViewMode('table')}
+                                    className={`flex h-8 w-8 items-center justify-center rounded ${viewMode === 'table' ? 'bg-white text-primary shadow-sm dark:bg-gray-700' : 'text-gray-500 hover:text-gray-900 dark:hover:text-gray-200'}`}
+                                    title="Table view"
+                                >
+                                    <ListBullets size={17} />
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setViewMode('card')}
+                                    className={`flex h-8 w-8 items-center justify-center rounded ${viewMode === 'card' ? 'bg-white text-primary shadow-sm dark:bg-gray-700' : 'text-gray-500 hover:text-gray-900 dark:hover:text-gray-200'}`}
+                                    title="Card view"
+                                >
+                                    <SquaresFour size={17} />
+                                </button>
+                            </div>
+                            <StaffOnly>
+                                <button type="button" onClick={handleExportCSV} className="inline-flex h-9 items-center gap-1.5 rounded-md border border-gray-200 px-3 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800">
+                                    <Download size={16} /> CSV
+                                </button>
+                                <button type="button" onClick={handleExportPDF} className="inline-flex h-9 items-center gap-1.5 rounded-md border border-gray-200 px-3 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800">
+                                    <FileText size={16} /> PDF
+                                </button>
+                                <button type="button" onClick={handlePrint} className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-200 text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800" title="Print">
+                                    <Printer size={16} />
+                                </button>
+                                <button type="button" onClick={() => setIsAddModalOpen(true)} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-3 text-sm font-semibold text-white shadow-sm shadow-primary/20 hover:opacity-90">
+                                    <Plus size={16} /> Add item
+                                </button>
+                            </StaffOnly>
                         </div>
                     </div>
-                </Card>
 
-                {/* Items Display - Grouped by Stock Level */}
-                {loading ? (
-                    <div className="flex items-center justify-center py-16">
-                        <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent" />
-                        <span className="ml-3 text-gray-500 dark:text-gray-400">Loading inventory...</span>
-                    </div>
-                ) : filteredItems.length === 0 ? (
-                    <Card className="py-12 text-center">
-                        <Package size={40} className="mx-auto text-gray-300 dark:text-gray-600 mb-3" />
-                        <p className="text-gray-500 dark:text-gray-400 text-sm">No items found matching your filters</p>
-                    </Card>
-                ) : (
-                    <div className="space-y-4">
-                        {stockGroups.map(group => {
-                            const groupItems = paginatedItems.filter(group.filter);
-                            if (groupItems.length === 0) return null;
-                            const isCollapsed = collapsedSections[group.key];
-                            const GroupIcon = group.icon;
+                    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_260px]">
+                        <div className="min-w-0">
+                            <div className="flex flex-col gap-2 border-b border-gray-200 px-4 py-3 dark:border-gray-800 xl:flex-row xl:items-center">
+                                <div className="relative min-w-0 flex-1">
+                                    <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                                    <input
+                                        value={search}
+                                        onChange={(e) => setSearch(e.target.value)}
+                                        placeholder="Quick search by item or category"
+                                        className="h-10 w-full rounded-md border border-gray-200 bg-gray-50 pl-9 pr-3 text-sm text-gray-900 outline-none transition focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/10 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 dark:focus:bg-gray-900"
+                                    />
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 sm:flex">
+                                    <label className="relative">
+                                        <SlidersHorizontal size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                                        <select
+                                            className="h-10 min-w-40 appearance-none rounded-md border border-gray-200 bg-gray-50 pl-9 pr-8 text-sm text-gray-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+                                            value={filterCategory}
+                                            onChange={(e) => setFilterCategory(e.target.value)}
+                                        >
+                                            <option value="">All categories</option>
+                                            {CATEGORY_OPTIONS.map(category => <option key={category} value={category}>{category}</option>)}
+                                        </select>
+                                    </label>
+                                    <label className="relative">
+                                        <StackSimple size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                                        <select
+                                            className="h-10 min-w-36 appearance-none rounded-md border border-gray-200 bg-gray-50 pl-9 pr-8 text-sm text-gray-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+                                            value={filterStatus}
+                                            onChange={(e) => setFilterStatus(e.target.value)}
+                                        >
+                                            <option value="">All status</option>
+                                            {STATUS_OPTIONS.map(status => <option key={status} value={status}>{status.replace('_', ' ')}</option>)}
+                                        </select>
+                                    </label>
+                                </div>
+                            </div>
 
-                            return (
-                                <div key={group.key} className={`rounded-xl border ${group.borderColor} overflow-hidden`}>
-                                    {/* Group header - clickable to collapse */}
-                                    <button
-                                        type="button"
-                                        onClick={() => setCollapsedSections(prev => ({ ...prev, [group.key]: !prev[group.key] }))}
-                                        className={`w-full flex items-center justify-between px-4 py-3 ${group.bgLight} cursor-pointer hover:opacity-90 transition-opacity`}
-                                    >
-                                        <div className="flex items-center gap-2">
-                                            <span className={`inline-flex items-center justify-center w-7 h-7 rounded-lg ${group.color} text-white`}>
-                                                <GroupIcon size={16} />
-                                            </span>
-                                            <span className={`font-semibold text-sm ${group.textColor}`}>{group.label}</span>
-                                            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${group.color} text-white`}>
-                                                {groupItems.length}
-                                            </span>
+                            {loading ? (
+                                <div className="flex min-h-[420px] items-center justify-center">
+                                    <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                                    <span className="ml-3 text-sm text-gray-500 dark:text-gray-400">Loading inventory...</span>
+                                </div>
+                            ) : filteredItems.length === 0 ? (
+                                <div className="flex min-h-[420px] flex-col items-center justify-center px-4 text-center">
+                                    <Package size={42} className="text-gray-300 dark:text-gray-600" />
+                                    <p className="mt-3 text-sm font-medium text-gray-700 dark:text-gray-200">No inventory records found</p>
+                                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Try clearing filters or adding a new item.</p>
+                                </div>
+                            ) : viewMode === 'card' ? (
+                                <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
+                                    {paginatedItems.map(item => (
+                                        <InventoryItemCard
+                                            key={item.id}
+                                            item={item}
+                                            showImages={showImages}
+                                            isFavorite={favorites.includes(item.id)}
+                                            isStaffPlus={isStaffPlus}
+                                            onToggleFavorite={toggleFavorite}
+                                            onViewDetail={setDetailItem}
+                                            onRequestItem={handleRequestItem}
+                                            onEdit={handleEdit}
+                                            onDelete={handleDelete}
+                                            onQrCode={(item) => { setQrItem(item); setQrModalOpen(true); }}
+                                            getStatusActions={getStatusActions}
+                                        />
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="overflow-x-auto">
+                                    <table className="w-full min-w-[920px] text-sm">
+                                        <thead className="border-b border-gray-200 bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-400">
+                                            <tr>
+                                                <th className="w-10 px-4 py-3 text-left">#</th>
+                                                <th className="px-3 py-3 text-left">Item</th>
+                                                <th className="px-3 py-3 text-left">Group</th>
+                                                <th className="px-3 py-3 text-left">Status</th>
+                                                <th className="px-3 py-3 text-left">Stock</th>
+                                                <th className="px-3 py-3 text-left">Access</th>
+                                                <th className="px-3 py-3 text-left">Location</th>
+                                                <th className="px-4 py-3 text-right">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                                            {paginatedItems.map((item, index) => {
+                                                const stock = getStockLabel(item);
+                                                const selected = selectedItem?.id === item.id;
+                                                return (
+                                                    <tr
+                                                        key={item.id}
+                                                        onClick={() => setSelectedItemId(item.id)}
+                                                        className={`${selected ? 'bg-primary/[0.06] dark:bg-primary/10' : 'hover:bg-gray-50 dark:hover:bg-gray-800/50'} cursor-pointer transition-colors`}
+                                                    >
+                                                        <td className="px-4 py-3 text-xs text-gray-400">{(currentPage - 1) * itemsPerPage + index + 1}</td>
+                                                        <td className="px-3 py-3">
+                                                            <div className="flex min-w-0 items-center gap-3">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => toggleFavorite(e, item.id)}
+                                                                    className={`flex h-7 w-7 flex-none items-center justify-center rounded-md ${favorites.includes(item.id) ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400'}`}
+                                                                    title={favorites.includes(item.id) ? 'Remove favorite' : 'Add favorite'}
+                                                                >
+                                                                    <Star size={15} fill={favorites.includes(item.id) ? 'currentColor' : 'none'} />
+                                                                </button>
+                                                                {showImages && (
+                                                                    item.imageUrl ? (
+                                                                        <img src={resolveImageUrl(item.imageUrl)} alt={item.name} className="h-10 w-10 flex-none rounded-md border border-gray-200 object-cover dark:border-gray-700" onError={(e) => { e.target.style.display = 'none'; }} />
+                                                                    ) : (
+                                                                        <span className="flex h-10 w-10 flex-none items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-xs font-bold text-gray-500 dark:border-gray-700 dark:bg-gray-800">
+                                                                            {CATEGORY_BADGES[item.category] || 'OT'}
+                                                                        </span>
+                                                                    )
+                                                                )}
+                                                                <div className="min-w-0">
+                                                                    <p className="truncate font-semibold text-gray-900 dark:text-gray-100">{item.name}</p>
+                                                                    <p className="truncate text-xs text-gray-500 dark:text-gray-400">{item.description || 'No description'}</p>
+                                                                </div>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-3 py-3">
+                                                            <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200">
+                                                                <Tag size={12} /> {item.category || 'OTHER'}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-3 py-3">
+                                                            <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${STATUS_COLORS[item.status] || STATUS_COLORS.AVAILABLE}`}>
+                                                                {item.status?.replace('_', ' ') || 'AVAILABLE'}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-3 py-3">
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="font-semibold text-gray-900 dark:text-gray-100">{item.quantity}</span>
+                                                                <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${stock.className}`}>{stock.label}</span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-3 py-3">
+                                                            <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-300">
+                                                                <ShieldCheck size={13} className="text-primary" /> {item.accessLevel || 'STUDENT'}+
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-3 py-3">
+                                                            <span className="inline-flex max-w-[160px] items-center gap-1 truncate text-xs text-gray-600 dark:text-gray-300">
+                                                                <MapPin size={13} className="flex-none text-gray-400" /> {item.location || 'No location'}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                                                            <div className="flex justify-end gap-1">
+                                                                <button type="button" onClick={() => setDetailItem(item)} className="flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-gray-800 dark:hover:text-white" title="View details">
+                                                                    <Eye size={16} />
+                                                                </button>
+                                                                {item.status === 'AVAILABLE' && item.quantity > 0 && (
+                                                                    <button type="button" onClick={(e) => handleRequestItem(item, e)} className="flex h-8 w-8 items-center justify-center rounded-md text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20" title="Request item">
+                                                                        <FileText size={16} />
+                                                                    </button>
+                                                                )}
+                                                                <StaffOnly>
+                                                                    {getStatusActions(item).slice(0, 1).map((action) => {
+                                                                        const ActionIcon = action.icon;
+                                                                        return (
+                                                                            <button key={action.label} type="button" onClick={action.onClick} className={`flex h-8 w-8 items-center justify-center rounded-md ${action.color}`} title={action.label}>
+                                                                                <ActionIcon size={16} />
+                                                                            </button>
+                                                                        );
+                                                                    })}
+                                                                    <button type="button" onClick={() => { setQrItem(item); setQrModalOpen(true); }} className="flex h-8 w-8 items-center justify-center rounded-md text-primary hover:bg-primary/10" title="QR code">
+                                                                        <QrCode size={16} />
+                                                                    </button>
+                                                                    <button type="button" onClick={() => handleEdit(item)} className="flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-gray-800 dark:hover:text-white" title="Edit">
+                                                                        <Edit size={16} />
+                                                                    </button>
+                                                                    <button type="button" onClick={() => handleDelete(item.id)} className="flex h-8 w-8 items-center justify-center rounded-md text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20" title="Delete">
+                                                                        <Trash2 size={16} />
+                                                                    </button>
+                                                                </StaffOnly>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+
+                            {!loading && filteredItems.length > 0 && (
+                                <div className="flex flex-col gap-3 border-t border-gray-200 px-4 py-3 dark:border-gray-800 sm:flex-row sm:items-center sm:justify-between">
+                                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                                        Showing <span className="font-semibold text-gray-800 dark:text-gray-200">{(currentPage - 1) * itemsPerPage + 1}</span>-<span className="font-semibold text-gray-800 dark:text-gray-200">{Math.min(currentPage * itemsPerPage, filteredItems.length)}</span> of <span className="font-semibold text-gray-800 dark:text-gray-200">{filteredItems.length}</span>
+                                    </p>
+                                    <div className="flex items-center gap-1">
+                                        <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="h-8 rounded-md border border-gray-200 px-3 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800">Prev</button>
+                                        <span className="px-3 text-sm text-gray-500 dark:text-gray-400">{currentPage} / {totalPages}</span>
+                                        <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="h-8 rounded-md border border-gray-200 px-3 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800">Next</button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <aside className="border-t border-gray-200 bg-gray-50/70 p-4 dark:border-gray-800 dark:bg-gray-950/30 lg:border-l lg:border-t-0">
+                            <div className="space-y-5">
+                                <div>
+                                    <p className="text-[11px] font-semibold uppercase tracking-wider text-primary">Overview</p>
+                                    <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-1">
+                                        <div>
+                                            <p className="text-xs text-gray-500 dark:text-gray-400">SKU Total</p>
+                                            <p className="mt-1 text-2xl font-bold text-gray-950 dark:text-white">{compactNumber(stats.total || inventory.length)}</p>
                                         </div>
-                                        {isCollapsed ? <ChevronRight size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
-                                    </button>
+                                        <div>
+                                            <p className="text-xs text-gray-500 dark:text-gray-400">Available</p>
+                                            <p className="mt-1 text-2xl font-bold text-emerald-600">{compactNumber(stats.available)}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-xs text-gray-500 dark:text-gray-400">In Use</p>
+                                            <p className="mt-1 text-2xl font-bold text-blue-600">{compactNumber(stats.inUse)}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-xs text-gray-500 dark:text-gray-400">Stock Issues</p>
+                                            <p className="mt-1 text-2xl font-bold text-red-600">{filteredItems.filter(i => i.quantity === 0 || (i.quantity > 0 && i.quantity <= LOW_STOCK_THRESHOLD)).length}</p>
+                                        </div>
+                                    </div>
+                                </div>
 
-                                    {/* Group body */}
-                                    {!isCollapsed && (
-                                        viewMode === 'card' ? (
-                                            /* ===== CARD VIEW ===== */
-                                            <div className="p-4">
-                                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                                                    {groupItems.map(item => (
-                                                        <InventoryItemCard
-                                                            key={item.id}
-                                                            item={item}
-                                                            showImages={showImages}
-                                                            isFavorite={favorites.includes(item.id)}
-                                                            isStaffPlus={isStaffPlus}
-                                                            onToggleFavorite={toggleFavorite}
-                                                            onViewDetail={setDetailItem}
-                                                            onRequestItem={handleRequestItem}
-                                                            onEdit={handleEdit}
-                                                            onDelete={handleDelete}
-                                                            onQrCode={(item) => { setQrItem(item); setQrModalOpen(true); }}
-                                                            getStatusActions={getStatusActions}
-                                                        />
-                                                    ))}
+                                <div className="border-t border-gray-200 pt-4 dark:border-gray-800">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Category Mix</p>
+                                    <div className="mt-3 space-y-2">
+                                        {CATEGORY_OPTIONS.map(category => {
+                                            const count = filteredItems.filter(item => item.category === category).length;
+                                            const width = filteredItems.length ? Math.max(6, (count / filteredItems.length) * 100) : 0;
+                                            return (
+                                                <div key={category}>
+                                                    <div className="mb-1 flex items-center justify-between text-xs">
+                                                        <span className="font-medium text-gray-600 dark:text-gray-300">{category}</span>
+                                                        <span className="text-gray-400">{count}</span>
+                                                    </div>
+                                                    <div className="h-1.5 rounded-full bg-gray-200 dark:bg-gray-800">
+                                                        <div className="h-1.5 rounded-full bg-primary" style={{ width: `${width}%` }} />
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                                <div className="border-t border-gray-200 pt-4 dark:border-gray-800">
+                                    <div className="mb-3 flex items-center justify-between">
+                                        <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Selected Item</p>
+                                        <DotsThree size={18} className="text-gray-400" />
+                                    </div>
+                                    {selectedItem ? (
+                                        <div className="rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900">
+                                            <div className="flex items-start gap-3">
+                                                {selectedItem.imageUrl ? (
+                                                    <img src={resolveImageUrl(selectedItem.imageUrl)} alt={selectedItem.name} className="h-16 w-16 rounded-md object-cover" onError={(e) => { e.target.style.display = 'none'; }} />
+                                                ) : (
+                                                    <div className="flex h-16 w-16 items-center justify-center rounded-md bg-gray-100 text-sm font-bold text-gray-500 dark:bg-gray-800">
+                                                        {CATEGORY_BADGES[selectedItem.category] || 'OT'}
+                                                    </div>
+                                                )}
+                                                <div className="min-w-0 flex-1">
+                                                    <p className="line-clamp-2 text-sm font-semibold text-gray-900 dark:text-white">{selectedItem.name}</p>
+                                                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{selectedItem.category}</p>
                                                 </div>
                                             </div>
-                                        ) : (
-                                            /* ===== TABLE VIEW ===== */
-                                            <Table>
-                                                <Table.Header>
-                                                    <Table.Row>
-                                                        <Table.Head>Item</Table.Head>
-                                                        <Table.Head>Category</Table.Head>
-                                                        <Table.Head>Quantity</Table.Head>
-                                                        <Table.Head>Status</Table.Head>
-                                                        <Table.Head>Priority</Table.Head>
-                                                        <Table.Head>Location</Table.Head>
-                                                        <Table.Head className="text-right"><StaffOnly>Actions</StaffOnly></Table.Head>
-                                                    </Table.Row>
-                                                </Table.Header>
-                                                <Table.Body>
-                                                    {groupItems.map(item => (
-                                                        <Table.Row key={item.id} className="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors duration-200" onClick={() => setDetailItem(item)}>
-                                                            <Table.Cell>
-                                                                <div className="flex items-center gap-3">
-                                                                    {showImages && (
-                                                                        item.imageUrl ? (
-                                                                            <img src={resolveImageUrl(item.imageUrl)} alt={item.name} className="w-10 h-10 rounded-lg object-cover border border-gray-200 dark:border-gray-600 transition-transform duration-200 hover:scale-110" onError={(e) => { e.target.style.display = 'none'; }} />
-                                                                        ) : (
-                                                                            <span className="text-sm font-bold">{CATEGORY_BADGES[item.category] || 'OT'}</span>
-                                                                        )
-                                                                    )}
-                                                                    <span className="font-medium hover:text-primary transition-colors">{item.name}</span>
-                                                                </div>
-                                                            </Table.Cell>
-                                                            <Table.Cell>
-                                                                <span className="inline-flex items-center gap-1 text-sm">
-                                                                    {CATEGORY_BADGES[item.category] || 'OT'} {item.category}
-                                                                </span>
-                                                            </Table.Cell>
-                                                            <Table.Cell>
-                                                                <div className="flex items-center gap-2">
-                                                                    <span className={`font-semibold ${item.quantity === 0 ? 'text-red-600 dark:text-red-400' : item.quantity <= 5 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-900 dark:text-gray-100'}`}>
-                                                                        {item.quantity}
-                                                                    </span>
-                                                                </div>
-                                                            </Table.Cell>
-                                                            <Table.Cell>
-                                                                <span className={`px-2 py-1 rounded-full text-xs font-medium ${STATUS_COLORS[item.status]}`}>
-                                                                    {item.status}
-                                                                </span>
-                                                            </Table.Cell>
-                                                            <Table.Cell>
-                                                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${getPriorityBadgeClass(item.priority)}`}>
-                                                                    {getPriorityMarker(item.priority)} {item.priority || 'MEDIUM'}
-                                                                </span>
-                                                            </Table.Cell>
-                                                            <Table.Cell>
-                                                                <div className="flex items-center gap-1 text-sm">
-                                                                    <MapPin size={12} className="text-gray-400" />
-                                                                    {item.location || '-'}
-                                                                </div>
-                                                            </Table.Cell>
-                                                            <Table.Cell onClick={(e) => e.stopPropagation()}>
-                                                                <div className="flex justify-end gap-1">
-                                                                    {item.status === 'AVAILABLE' && item.quantity > 0 && (
-                                                                        <Button variant="ghost" size="sm" onClick={(e) => handleRequestItem(item, e)} title="Request This Item" className="text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20"><FileText size={16} /></Button>
-                                                                    )}
-                                                                    <StaffOnly>
-                                                                        {getStatusActions(item).map((action, idx) => {
-                                                                            const ActionIcon = action.icon;
-                                                                            return (
-                                                                                <Button key={idx} variant="ghost" size="sm" onClick={action.onClick} title={action.label} className={action.color}>
-                                                                                    <ActionIcon size={16} />
-                                                                                </Button>
-                                                                            );
-                                                                        })}
-                                                                        <Button variant="ghost" size="sm" onClick={() => { setQrItem(item); setQrModalOpen(true); }} title="QR Code"><QrCode size={16} className="text-primary" /></Button>
-                                                                        <Button variant="ghost" size="sm" onClick={() => handleEdit(item)} title="Edit"><Edit size={16} /></Button>
-                                                                        <Button variant="ghost" size="sm" onClick={() => handleDelete(item.id)} title="Delete"><Trash2 size={16} className="text-red-500" /></Button>
-                                                                    </StaffOnly>
-                                                                </div>
-                                                            </Table.Cell>
-                                                        </Table.Row>
-                                                    ))}
-                                                </Table.Body>
-                                            </Table>
-                                        )
+                                            <div className="mt-4 grid grid-cols-2 gap-3 text-center">
+                                                <div>
+                                                    <p className="text-xl font-bold text-gray-950 dark:text-white">{selectedItem.quantity}</p>
+                                                    <p className="text-[11px] text-gray-500 dark:text-gray-400">Units</p>
+                                                </div>
+                                                <div>
+                                                    <p className="text-xl font-bold text-gray-950 dark:text-white">{selectedItem.priority || 'MEDIUM'}</p>
+                                                    <p className="text-[11px] text-gray-500 dark:text-gray-400">Priority</p>
+                                                </div>
+                                            </div>
+                                            <button type="button" onClick={() => setDetailItem(selectedItem)} className="mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-gray-200 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800">
+                                                Open details <ArrowRight size={14} />
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <p className="rounded-md border border-dashed border-gray-300 px-3 py-6 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">Select a row to preview item details.</p>
                                     )}
                                 </div>
-                            );
-                        })}
+                            </div>
+                        </aside>
                     </div>
-                )}
-
-                {/* Pagination Controls */}
-                {!loading && filteredItems.length > itemsPerPage && (
-                    <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white dark:bg-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700/50 px-4 py-3">
-                        <p className="text-sm text-gray-500 dark:text-gray-400">
-                            Showing <span className="font-semibold text-gray-700 dark:text-gray-200">{(currentPage - 1) * itemsPerPage + 1}</span>-<span className="font-semibold text-gray-700 dark:text-gray-200">{Math.min(currentPage * itemsPerPage, filteredItems.length)}</span> of <span className="font-semibold text-gray-700 dark:text-gray-200">{filteredItems.length}</span> items
-                        </p>
-                        <div className="flex items-center gap-1">
-                            <button
-                                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                                disabled={currentPage === 1}
-                                className="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                            >
-                                Prev
-                            </button>
-                            {Array.from({ length: totalPages }, (_, i) => i + 1)
-                                .filter(p => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1)
-                                .reduce((acc, p, i, arr) => {
-                                    if (i > 0 && p - arr[i - 1] > 1) acc.push('...');
-                                    acc.push(p);
-                                    return acc;
-                                }, [])
-                                .map((p, i) =>
-                                    p === '...' ? (
-                                        <span key={`dots-${i}`} className="px-2 text-gray-400">...</span>
-                                    ) : (
-                                        <button
-                                            key={p}
-                                            onClick={() => setCurrentPage(p)}
-                                            className={`w-9 h-9 text-sm font-medium rounded-lg transition-colors ${
-                                                currentPage === p
-                                                    ? 'bg-primary text-white shadow-sm'
-                                                    : 'border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600'
-                                            }`}
-                                        >
-                                            {p}
-                                        </button>
-                                    )
-                                )
-                            }
-                            <button
-                                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                                disabled={currentPage === totalPages}
-                                className="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                            >
-                                Next
-                            </button>
-                        </div>
-                    </div>
-                )}
-
-                {/* Summary footer */}
-                {!loading && filteredItems.length > 0 && (
-                    <div className="flex items-center justify-between text-sm text-gray-500 dark:text-gray-400">
-                        <p>Showing {filteredItems.length} item{filteredItems.length !== 1 ? 's' : ''} across {stockGroups.filter(g => filteredItems.some(g.filter)).length} group{stockGroups.filter(g => filteredItems.some(g.filter)).length !== 1 ? 's' : ''}</p>
-                    </div>
-                )}
+                </section>
 
                 {/* Add/Edit Modal - extracted to InventoryFormModal */}
                 <InventoryFormModal

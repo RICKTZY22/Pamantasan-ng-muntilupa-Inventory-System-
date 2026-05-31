@@ -2,10 +2,13 @@ import { useEffect, useState } from 'react';
 import { Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { List as Menu, Warning as AlertTriangle } from '@phosphor-icons/react';
 import { Sidebar, BottomNav, MaintenanceOverlay, AccountFlagOverlay } from '../components/layout';
-import { Dashboard, Inventory, Requests, Reports, Login, Register, Settings, Users, AccountDeactivated } from '../pages';
+import { Dashboard, Inventory, Requests, Messages, Reports, Login, Register, Settings, Users, AccountDeactivated } from '../pages';
 import { NotificationDropdown, AnimatedBackground } from '../components/ui';
 import { useIsMobile, useMaintenanceWindow } from '../hooks';
 import useAuthStore from '../store/authStore';
+import useChatStore from '../store/chatStore';
+import messageService from '../services/messageService';
+import { connectChat, disconnectChat } from '../services/chatSocket';
 import { RoleGuard } from '../components/auth';
 import { ROLES } from '../utils/roles';
 
@@ -13,6 +16,7 @@ const PAGE_TITLES = {
     '/dashboard': 'Dashboard',
     '/inventory': 'Inventory',
     '/requests': 'Requests',
+    '/messages': 'Messages',
     '/reports': 'Reports',
     '/settings': 'Settings',
     '/users': 'User Management',
@@ -64,6 +68,16 @@ const DashboardLayout = () => {
         const id = setInterval(refreshProfile, 30_000);
         return () => clearInterval(id);
     }, [user, refreshProfile]);
+
+    // Connect the chat WebSocket app-wide so message badges + live delivery
+    // work everywhere, and load the conversation list once for the badge.
+    const setConversations = useChatStore((s) => s.setConversations);
+    useEffect(() => {
+        if (!user?.id) return undefined;
+        connectChat();
+        messageService.listConversations().then(setConversations).catch(() => {});
+        return () => disconnectChat();
+    }, [user?.id, setConversations]);
 
     const mainMargin = isMobile ? '0' : (sidebarCollapsed ? '5rem' : '16rem');
 
@@ -164,8 +178,30 @@ const NotFound = () => (
     </div>
 );
 
-const AppRoutes = () => (
-    <Routes>
+const AuthBootSplash = () => (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
+        <div className="animate-spin rounded-full h-10 w-10 border-2 border-primary border-t-transparent" />
+    </div>
+);
+
+const AppRoutes = () => {
+    const initializeAuth = useAuthStore((s) => s.initializeAuth);
+    const isInitializing = useAuthStore((s) => s.isInitializing);
+    const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+
+    // On load, re-mint the in-memory access token from the HttpOnly refresh cookie.
+    useEffect(() => {
+        initializeAuth();
+    }, [initializeAuth]);
+
+    // Hold rendering while a persisted session re-mints its token, so
+    // ProtectedRoute doesn't prematurely redirect or fire a 401 storm.
+    if (isInitializing && isAuthenticated) {
+        return <AuthBootSplash />;
+    }
+
+    return (
+        <Routes>
         <Route
             path="/login"
             element={(
@@ -194,6 +230,7 @@ const AppRoutes = () => (
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/inventory" element={<Inventory />} />
             <Route path="/requests" element={<Requests />} />
+            <Route path="/messages" element={<Messages />} />
             <Route path="/settings" element={<Settings />} />
             <Route
                 path="/reports"
@@ -215,7 +252,8 @@ const AppRoutes = () => (
 
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="*" element={<NotFound />} />
-    </Routes>
-);
+        </Routes>
+    );
+};
 
 export default AppRoutes;

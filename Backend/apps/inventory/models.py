@@ -33,7 +33,11 @@ class Item(models.Model):
         MEDIUM = 'MEDIUM', 'Medium'
         HIGH = 'HIGH', 'High'
 
-    name = models.CharField(max_length=200)
+    name = models.CharField(max_length=200, db_index=True)
+    brand = models.CharField(
+        max_length=100, blank=True, default='',
+        help_text='Manufacturer or brand (e.g. Dell, Epson). Optional.',
+    )
     category = models.CharField(
         max_length=50,
         choices=Category.choices,

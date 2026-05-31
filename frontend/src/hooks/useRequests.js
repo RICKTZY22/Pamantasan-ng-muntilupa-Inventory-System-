@@ -113,8 +113,19 @@ const useRequests = () => {
         handleAction(() => requestService.complete(id), 'Request marked as completed', 'Failed to complete request'),
         [handleAction]);
 
+    // Step 1: borrower (or staff) signals the item is being returned.
     const returnRequest = useCallback((id) =>
-        handleAction(() => requestService.returnItem(id), 'Item returned successfully', 'Failed to return item'),
+        handleAction(() => requestService.requestReturn(id), 'Return started — awaiting staff confirmation', 'Failed to start return'),
+        [handleAction]);
+
+    // Step 2: staff confirms physical receipt → item is actually returned.
+    const confirmReturn = useCallback((id) =>
+        handleAction(() => requestService.confirmReturn(id), 'Return confirmed — item received', 'Failed to confirm return'),
+        [handleAction]);
+
+    // Undo a pending return (requested by mistake / item not actually handed over).
+    const cancelReturn = useCallback((id) =>
+        handleAction(() => requestService.cancelReturn(id), 'Pending return cancelled', 'Failed to cancel return'),
         [handleAction]);
 
     const clearCompleted = useCallback(() =>
@@ -124,25 +135,6 @@ const useRequests = () => {
     const cancelRequest = useCallback((id) =>
         handleAction(() => requestService.cancel(id), 'Request cancelled', 'Failed to cancel request'),
         [handleAction]);
-
-    const getComments = useCallback(async (requestId) => {
-        try {
-            const data = await requestService.getComments(requestId);
-            return Array.isArray(data) ? data : data.results || [];
-        } catch (err) {
-            return [];
-        }
-    }, []);
-
-    const addComment = useCallback(async (requestId, text) => {
-        try {
-            const comment = await requestService.addComment(requestId, text);
-            return { success: true, comment };
-        } catch (err) {
-            const errorMessage = err.response?.data?.detail || 'Failed to add comment';
-            return { success: false, error: errorMessage };
-        }
-    }, []);
 
     return {
         requests,
@@ -159,10 +151,10 @@ const useRequests = () => {
         completeRequest,
         cancelRequest,
         returnRequest,
+        confirmReturn,
+        cancelReturn,
         clearCompleted,
         checkOverdue,
-        getComments,
-        addComment,
         stats,
     };
 };

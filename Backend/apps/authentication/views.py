@@ -5,8 +5,10 @@ from rest_framework import status, generics, permissions, serializers
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.utils.decorators import method_decorator
 from django_ratelimit.decorators import ratelimit
@@ -21,6 +23,35 @@ from .models import AuditLog, log_action
 from apps.permissions import IsAdmin
 
 User = get_user_model()
+
+
+# ── Refresh-token cookie helpers ───────────────────────────────────────────
+# The refresh token rides in an HttpOnly cookie instead of the JSON body, so JS
+# (and any XSS) can never read it. The access token stays in the SPA's memory.
+
+def _set_refresh_cookie(response, refresh_token):
+    """Move the refresh token out of the response body and into an HttpOnly cookie."""
+    if hasattr(response, 'data') and isinstance(response.data, dict):
+        response.data.pop('refresh', None)
+    response.set_cookie(
+        settings.REFRESH_COOKIE_NAME,
+        refresh_token,
+        max_age=settings.REFRESH_COOKIE_MAX_AGE,
+        httponly=True,
+        secure=settings.REFRESH_COOKIE_SECURE,
+        samesite=settings.REFRESH_COOKIE_SAMESITE,
+        path=settings.REFRESH_COOKIE_PATH,
+    )
+    return response
+
+
+def _clear_refresh_cookie(response):
+    response.delete_cookie(
+        settings.REFRESH_COOKIE_NAME,
+        path=settings.REFRESH_COOKIE_PATH,
+        samesite=settings.REFRESH_COOKIE_SAMESITE,
+    )
+    return response
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -72,16 +103,17 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 status=status.HTTP_429_TOO_MANY_REQUESTS
             )
 
-        # Check for deactivated account BEFORE JWT auth
-        # JWT returns the same "No active account" error for both wrong passwords
-        # and deactivated accounts, so we check first and return a distinct code.
+        # Distinguish a deactivated account from bad credentials — but ONLY to a
+        # caller who supplied the CORRECT password. Revealing ACCOUNT_DEACTIVATED
+        # for any matching username would let an attacker enumerate which accounts
+        # exist/are deactivated without knowing the password.
         email = request.data.get('email', '').strip().lower()
         username = request.data.get('username', '').strip()
         lookup = username or email
         if lookup:
             try:
                 user_check = User.objects.get(email__iexact=lookup) if '@' in lookup else User.objects.get(username=lookup)
-                if not user_check.is_active:
+                if not user_check.is_active and user_check.check_password(request.data.get('password', '')):
                     log_action(AuditLog.LOGIN_FAILED,
                                details=f'Login attempt on deactivated account: {lookup}',
                                request=request)
@@ -105,6 +137,10 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             log_action(AuditLog.LOGIN, user=user,
                        details=f'Successful login from {request.META.get("REMOTE_ADDR", "")}',
                        request=request)
+            # Refresh token → HttpOnly cookie; only access + user stay in the body.
+            refresh = response.data.get('refresh')
+            if refresh:
+                _set_refresh_cookie(response, refresh)
         else:
             # Failed login
             log_action(AuditLog.LOGIN_FAILED,
@@ -141,14 +177,69 @@ class RegisterView(generics.CreateAPIView):
                    details=f'New account: {user.username} ({user.role})',
                    request=request)
 
-        refresh = RefreshToken.for_user(user)
         user_serializer = UserSerializer(user, context={'request': request})
-        return Response({
+
+        # If an authenticated admin is creating a user, do NOT issue a session for
+        # the new account — that would overwrite the admin's own refresh cookie and
+        # hijack their session. Just return the created user.
+        if request.user and request.user.is_authenticated:
+            return Response({
+                'message': 'User created successfully',
+                'user': user_serializer.data,
+            }, status=status.HTTP_201_CREATED)
+
+        # Public self-registration → log the new user in (access in body, refresh in cookie).
+        refresh = RefreshToken.for_user(user)
+        response = Response({
             'message': 'Registration successful',
             'user': user_serializer.data,
             'access': str(refresh.access_token),
-            'refresh': str(refresh),
         }, status=status.HTTP_201_CREATED)
+        _set_refresh_cookie(response, str(refresh))
+        return response
+
+
+class CookieTokenRefreshView(TokenRefreshView):
+    """Refresh using the HttpOnly cookie instead of a request-body field.
+    Returns a new access token in the body and rotates the refresh cookie.
+    401 (and clears the cookie) if it's missing/invalid so the SPA re-logs in."""
+
+    def post(self, request, *args, **kwargs):
+        refresh = request.COOKIES.get(settings.REFRESH_COOKIE_NAME)
+        if not refresh:
+            return Response({'detail': 'No refresh token.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        serializer = self.get_serializer(data={'refresh': refresh})
+        try:
+            serializer.is_valid(raise_exception=True)
+        except (TokenError, InvalidToken):
+            resp = Response({'detail': 'Invalid or expired refresh token.'},
+                            status=status.HTTP_401_UNAUTHORIZED)
+            return _clear_refresh_cookie(resp)
+
+        data = serializer.validated_data
+        response = Response({'access': data['access']}, status=status.HTTP_200_OK)
+        # ROTATE_REFRESH_TOKENS is on → a new refresh is issued; keep it cookie-only.
+        if data.get('refresh'):
+            _set_refresh_cookie(response, data['refresh'])
+        return response
+
+
+class LogoutView(APIView):
+    """Blacklist the refresh token from the cookie and clear the cookie.
+    AllowAny because the access token may already be expired at logout time."""
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        refresh = request.COOKIES.get(settings.REFRESH_COOKIE_NAME)
+        if refresh:
+            try:
+                from rest_framework_simplejwt.tokens import RefreshToken
+                RefreshToken(refresh).blacklist()
+            except Exception:
+                pass  # already expired/blacklisted/invalid — nothing to do
+        response = Response({'message': 'Logged out.'}, status=status.HTTP_200_OK)
+        return _clear_refresh_cookie(response)
 
 
 class ProfileView(APIView):
@@ -380,6 +471,8 @@ class MaintenanceView(APIView):
     a persistent cache backend (Redis/Memcached) is configured."""
 
     CACHE_KEY = 'plmun_maintenance'
+    DEFAULT_DURATION_MINS = 30
+    MAX_DURATION_MINS = 24 * 60
 
     def get_permissions(self):
         if self.request.method == 'POST':
@@ -394,14 +487,48 @@ class MaintenanceView(APIView):
             return Response({'enabled': True, 'endTime': data['endTime']})
         return Response({'enabled': False, 'endTime': 0})
 
+    @staticmethod
+    def _parse_enabled(value):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {'true', '1', 'yes', 'on'}:
+                return True
+            if normalized in {'false', '0', 'no', 'off'}:
+                return False
+        return None
+
+    @classmethod
+    def _parse_duration(cls, value):
+        try:
+            duration = int(value)
+        except (TypeError, ValueError):
+            return None
+        if duration < 1 or duration > cls.MAX_DURATION_MINS:
+            return None
+        return duration
+
     def post(self, request):
         from django.core.cache import cache
         import time
 
-        enabled = request.data.get('enabled', False)
-        duration_mins = int(request.data.get('durationMins', 30))
+        enabled = self._parse_enabled(request.data.get('enabled', False))
+        if enabled is None:
+            return Response(
+                {'error': 'enabled must be true or false.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if enabled:
+            duration_mins = self._parse_duration(
+                request.data.get('durationMins', self.DEFAULT_DURATION_MINS)
+            )
+            if duration_mins is None:
+                return Response(
+                    {'error': f'durationMins must be between 1 and {self.MAX_DURATION_MINS}.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             end_time = int(time.time() * 1000) + duration_mins * 60 * 1000
             # Cache TTL = duration + 1 minute buffer (in seconds)
             cache.set(self.CACHE_KEY, {'enabled': True, 'endTime': end_time}, timeout=duration_mins * 60 + 60)

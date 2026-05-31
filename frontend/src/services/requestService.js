@@ -38,23 +38,24 @@ const requestService = {
         return response.data;
     },
 
-    getComments: async (id) => {
-        const response = await api.get(`/requests/${id}/comments/`);
-        return response.data;
-    },
-
-    addComment: async (id, text) => {
-        const response = await api.post(`/requests/${id}/comments/`, { text });
-        return response.data;
-    },
-
     getStats: async () => {
         const response = await api.get('/requests/stats/');
         return response.data;
     },
 
-    returnItem: async (id) => {
-        const response = await api.post(`/requests/${id}/return_item/`);
+    // Two-step return handshake.
+    requestReturn: async (id) => {
+        const response = await api.post(`/requests/${id}/request_return/`);
+        return response.data;
+    },
+
+    confirmReturn: async (id) => {
+        const response = await api.post(`/requests/${id}/confirm_return/`);
+        return response.data;
+    },
+
+    cancelReturn: async (id) => {
+        const response = await api.post(`/requests/${id}/cancel_return/`);
         return response.data;
     },
 

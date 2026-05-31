@@ -27,6 +27,12 @@ const InventoryFormModal = ({
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                     placeholder="Enter item name"
                 />
+                <Input
+                    label="Brand"
+                    value={formData.brand}
+                    onChange={(e) => setFormData({ ...formData, brand: e.target.value })}
+                    placeholder="e.g. Dell, Epson (optional)"
+                />
                 <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1">
                         <label className="block text-xs font-bold text-gray-500 uppercase ml-1">Category</label>
@@ -45,12 +51,13 @@ const InventoryFormModal = ({
                     <Input
                         label="Quantity"
                         type="number"
-                        min="1"
+                        min="0"
                         required
                         value={formData.quantity}
                         onChange={(e) => {
-                            const parsed = parseInt(e.target.value) || 1;
-                            setFormData({ ...formData, quantity: Math.max(1, parsed) });
+                            const rawValue = e.target.value;
+                            const parsed = rawValue === '' ? '' : Math.max(0, parseInt(rawValue, 10) || 0);
+                            setFormData({ ...formData, quantity: parsed });
                         }}
                     />
                 </div>

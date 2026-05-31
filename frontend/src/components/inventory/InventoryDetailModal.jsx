@@ -4,7 +4,8 @@
    so I refactored it into lookup objects — much easier to read now. */
 import React from 'react';
 import PropTypes from 'prop-types';
-import { MapPin, Package, ArrowCounterClockwise as RotateCcw, Shield, Timer, Clock, CalendarBlank as Calendar, Warning as AlertTriangle } from '@phosphor-icons/react';
+import { useNavigate } from 'react-router-dom';
+import { MapPin, Package, ArrowCounterClockwise as RotateCcw, Shield, Timer, Clock, CalendarBlank as Calendar, Warning as AlertTriangle, ChatCircle } from '@phosphor-icons/react';
 import { Modal } from '../ui';
 import { resolveImageUrl } from '../../utils/imageUtils';
 
@@ -36,7 +37,17 @@ const InventoryDetailModal = ({
     isStaffPlus,
     getStatusActions,
 }) => {
+    const navigate = useNavigate();
     if (!item) return null;
+
+    // Open the PLMun Assistant thread with this item attached so the user can
+    // ask about it (brand, specs, availability, etc.).
+    const referInChat = () => {
+        onClose();
+        navigate('/messages', {
+            state: { askAssistantItem: { id: item.id, name: item.name, brand: item.brand, category: item.category, quantity: item.quantity } },
+        });
+    };
 
     // Helper to pick color based on access level — avoids repeating the
     // same ternary chain inline (which was getting unreadable in the original).
@@ -88,6 +99,7 @@ const InventoryDetailModal = ({
                     <p className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-1.5 mt-1">
                         <span>{categoryIcons[item.category] || '📋'}</span>
                         {item.category}
+                        {item.brand && <span className="text-gray-400">· {item.brand}</span>}
                     </p>
                 </div>
 
@@ -254,13 +266,22 @@ const InventoryDetailModal = ({
                     </div>
                 )}
 
-                {/* Close */}
-                <button
-                    onClick={onClose}
-                    className="w-full py-2.5 rounded-xl bg-primary/10 text-primary font-semibold text-sm hover:bg-primary/20 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
-                >
-                    Close
-                </button>
+                {/* Refer to chat + Close */}
+                <div className="flex gap-2">
+                    <button
+                        onClick={referInChat}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-accent text-white font-semibold text-sm hover:bg-accent/90 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                    >
+                        <ChatCircle size={16} weight="duotone" />
+                        Ask about this item
+                    </button>
+                    <button
+                        onClick={onClose}
+                        className="px-5 py-2.5 rounded-xl bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 font-semibold text-sm hover:bg-gray-200 dark:hover:bg-gray-600 transition-all"
+                    >
+                        Close
+                    </button>
+                </div>
             </div>
         </Modal>
     );
@@ -272,6 +293,7 @@ InventoryDetailModal.propTypes = {
         quantity: PropTypes.number,
         imageUrl: PropTypes.string,
         name: PropTypes.string,
+        brand: PropTypes.string,
         category: PropTypes.string,
         status: PropTypes.string,
         location: PropTypes.string,

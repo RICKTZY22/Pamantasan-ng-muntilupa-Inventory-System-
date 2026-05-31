@@ -17,6 +17,7 @@ class User(AbstractUser):
         max_length=20,
         choices=Role.choices,
         default=Role.STUDENT,
+        db_index=True,
     )
     department = models.CharField(max_length=100, blank=True)
     student_id = models.CharField(max_length=20, blank=True)

@@ -11,6 +11,7 @@ const SecurityTab = ({ passwordForm, setPasswordForm, passwordError, setPassword
                 label="Current Password"
                 type="password"
                 icon={Lock}
+                autoComplete="current-password"
                 value={passwordForm.currentPassword}
                 onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
             />
@@ -19,6 +20,7 @@ const SecurityTab = ({ passwordForm, setPasswordForm, passwordError, setPassword
                     label="New Password"
                     type="password"
                     icon={Lock}
+                    autoComplete="new-password"
                     value={passwordForm.newPassword}
                     onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
                 />
@@ -28,6 +30,7 @@ const SecurityTab = ({ passwordForm, setPasswordForm, passwordError, setPassword
                 label="Confirm New Password"
                 type="password"
                 icon={Lock}
+                autoComplete="new-password"
                 value={passwordForm.confirmPassword}
                 onChange={(e) => { setPasswordForm({ ...passwordForm, confirmPassword: e.target.value }); setPasswordError(''); }}
             />

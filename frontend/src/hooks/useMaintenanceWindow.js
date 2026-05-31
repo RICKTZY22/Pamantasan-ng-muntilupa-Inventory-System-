@@ -2,7 +2,10 @@ import { useEffect, useState } from 'react';
 import api from '../services/api';
 import { ROLES, hasMinRole } from '../utils/roles';
 
-const POLL_MS = 10_000;
+// Maintenance mode is a rare admin action, so a slow poll is plenty — a user
+// drops into the maintenance screen within ~a minute of it being enabled.
+// (Was 10s, which spammed the backend with a request every 10s per user.)
+const POLL_MS = 60_000;
 const TICK_MS = 1_000;
 
 const formatCountdown = (endTime) => {

@@ -4,7 +4,7 @@ import {
     Printer, Trash as Trash2, FloppyDisk as Save, ArrowsClockwise, UserPlus,
     Envelope, HardDrives, Database, Broom, Info, CheckCircle, Warning,
 } from '@phosphor-icons/react';
-import { Button, Toggle } from '../../components/ui';
+import { Button, Toggle, Table } from '../../components/ui';
 import { SettingsGroup, SettingCard } from '../../components/settings';
 import { AdminOnly } from '../../components/auth';
 import api from '../../services/api';
@@ -52,12 +52,19 @@ const actionColorClass = (action) =>
 
 const AdminTab = ({
     adminSettings, setAdminSettings, flashMessage,
-    saveSettings, adminPrefsKey, users,
+    saveSettings, adminPrefsKey,
     auditLogs, auditLogsLoading, fetchAuditLogs,
     handleClearAuditLogs, handleExportAuditLogs, handleBackupNow, backupLoading,
     clearLogsConfirm, setClearLogsConfirm,
 }) => {
     const env = import.meta.env.MODE || 'development';
+    const [userCount, setUserCount] = useState(null);
+
+    // Self-source the user count (System info) so this tab no longer depends
+    // on the Settings page wiring user-management state.
+    useEffect(() => {
+        api.get('/users/stats/').then(res => setUserCount(res.data?.total ?? null)).catch(() => { });
+    }, []);
 
     return (
         <AdminOnly showAccessDenied>
@@ -237,49 +244,39 @@ const AdminTab = ({
                         defaultOpen
                     >
                         <div className="space-y-3">
-                            <div className="rounded-lg border border-gray-200 dark:border-gray-700/60 overflow-hidden">
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-sm">
-                                        <thead className="bg-gray-50 dark:bg-gray-800/60">
-                                            <tr>
-                                                <th className="text-left py-2.5 px-4 font-semibold text-gray-600 dark:text-gray-400">Action</th>
-                                                <th className="text-left py-2.5 px-4 font-semibold text-gray-600 dark:text-gray-400">User</th>
-                                                <th className="text-left py-2.5 px-4 font-semibold text-gray-600 dark:text-gray-400">Details</th>
-                                                <th className="text-left py-2.5 px-4 font-semibold text-gray-600 dark:text-gray-400">Timestamp</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-gray-100 dark:divide-gray-700/50">
-                                            {auditLogsLoading ? (
-                                                <tr>
-                                                    <td colSpan={4} className="py-10 text-center text-gray-400 text-sm">
-                                                        <span className="inline-block w-5 h-5 border-2 border-gray-300 border-t-accent rounded-full animate-spin mr-2 align-middle" />
-                                                        Loading audit logs…
-                                                    </td>
-                                                </tr>
-                                            ) : auditLogs.length === 0 ? (
-                                                <tr>
-                                                    <td colSpan={4} className="py-10 text-center text-gray-400 text-sm">
-                                                        No audit log entries yet.
-                                                    </td>
-                                                </tr>
-                                            ) : auditLogs.map((log) => (
-                                                <tr key={log.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
-                                                    <td className="py-2.5 px-4">
-                                                        <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${actionColorClass(log.action)}`}>
-                                                            {log.action}
-                                                        </span>
-                                                    </td>
-                                                    <td className="py-2.5 px-4 text-gray-700 dark:text-gray-300 font-medium">{log.user || '—'}</td>
-                                                    <td className="py-2.5 px-4 text-gray-600 dark:text-gray-400">{log.details || '—'}</td>
-                                                    <td className="py-2.5 px-4 text-gray-500 dark:text-gray-500 text-xs whitespace-nowrap">
-                                                        {new Date(log.timestamp).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
+                            {auditLogsLoading ? (
+                                <div className="py-10 text-center rounded-lg border border-gray-200 dark:border-gray-700/60">
+                                    <span className="inline-block w-6 h-6 border-2 border-accent/30 border-t-accent rounded-full animate-spin mb-2" />
+                                    <p className="text-sm text-gray-400">Loading audit logs…</p>
                                 </div>
-                            </div>
+                            ) : (
+                                <Table>
+                                    <Table.Header>
+                                        <Table.Row>
+                                            <Table.Head>Action</Table.Head>
+                                            <Table.Head>User</Table.Head>
+                                            <Table.Head>Details</Table.Head>
+                                            <Table.Head>Timestamp</Table.Head>
+                                        </Table.Row>
+                                    </Table.Header>
+                                    <Table.Body>
+                                        {auditLogs.length === 0 ? (
+                                            <Table.Empty colSpan={4} message="No audit log entries yet." />
+                                        ) : auditLogs.map((log) => (
+                                            <Table.Row key={log.id}>
+                                                <Table.Cell>
+                                                    <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${actionColorClass(log.action)}`}>{log.action}</span>
+                                                </Table.Cell>
+                                                <Table.Cell className="font-medium text-gray-700 dark:text-gray-300">{log.user || '—'}</Table.Cell>
+                                                <Table.Cell>{log.details || '—'}</Table.Cell>
+                                                <Table.Cell className="text-xs whitespace-nowrap text-gray-500 dark:text-gray-500">
+                                                    {new Date(log.timestamp).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}
+                                                </Table.Cell>
+                                            </Table.Row>
+                                        ))}
+                                    </Table.Body>
+                                </Table>
+                            )}
                             <div className="flex flex-wrap justify-end gap-2">
                                 <Button variant="ghost" size="sm" icon={ArrowsClockwise} onClick={fetchAuditLogs}>Refresh</Button>
                                 <Button variant="ghost" size="sm" icon={Printer} onClick={handleExportAuditLogs} disabled={auditLogs.length === 0}>Print / Export</Button>
@@ -321,7 +318,7 @@ const AdminTab = ({
                         icon={UserPlus}
                         title="Total users"
                         description="Registered accounts across all roles"
-                        control={<span className="text-sm font-semibold text-gray-800 dark:text-gray-200">{users.length || '—'}</span>}
+                        control={<span className="text-sm font-semibold text-gray-800 dark:text-gray-200">{userCount ?? '—'}</span>}
                     />
                     <SettingCard
                         icon={Database}

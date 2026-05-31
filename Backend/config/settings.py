@@ -28,11 +28,18 @@ SECRET_KEY = os.environ.get(
 if not SECRET_KEY:
     raise ValueError('SECRET_KEY environment variable is required in production (DEBUG=False).')
 
-ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+    if host.strip()
+]
 
 
 # ===== Installed Apps =====
 INSTALLED_APPS = [
+    # Must precede django.contrib.staticfiles so its runserver ASGI override applies
+    'daphne',
+
     # Built-in Django apps
     'django.contrib.admin',
     'django.contrib.auth',
@@ -48,12 +55,14 @@ INSTALLED_APPS = [
     'corsheaders',
     'drf_spectacular',
     'django_ratelimit',
+    'channels',
 
     # Local apps
     'apps.authentication',
     'apps.inventory',
     'apps.requests',
     'apps.users',
+    'apps.messaging',
 ]
 
 # ===== Middleware =====
@@ -89,6 +98,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'config.wsgi.application'
+ASGI_APPLICATION = 'config.asgi.application'
 
 
 # ===== Database =====
@@ -124,6 +134,8 @@ REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 50,
+    # Logs unhandled 5xx with a traceback and returns a clean JSON 500.
+    'EXCEPTION_HANDLER': 'apps.common.drf.exception_handler',
 }
 
 
@@ -136,6 +148,21 @@ SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
+# ===== Refresh-token cookie =====
+# The refresh token is delivered in an HttpOnly cookie (not the JSON body), so
+# JS — and therefore any XSS — can never read it. The short-lived access token
+# stays in the SPA's memory. Path-scoped to the auth endpoints so it's not sent
+# on every API call. Secure only over HTTPS (prod); SameSite=Lax works because
+# the SPA and API are same-site in dev (ports don't affect SameSite).
+# NOTE: if frontend and API are deployed on *different* sites in production,
+# set REFRESH_COOKIE_SAMESITE='None' (requires HTTPS) and add a CSRF token to
+# the refresh endpoint.
+REFRESH_COOKIE_NAME = 'refresh_token'
+REFRESH_COOKIE_PATH = '/api/auth/'
+REFRESH_COOKIE_SAMESITE = os.environ.get('REFRESH_COOKIE_SAMESITE', 'Lax')
+REFRESH_COOKIE_SECURE = not DEBUG
+REFRESH_COOKIE_MAX_AGE = int(SIMPLE_JWT['REFRESH_TOKEN_LIFETIME'].total_seconds())
+
 
 # ===== CORS Settings =====
 # whitelist lang - lagay ng production URLs sa CORS_ORIGINS env var (comma-separated)
@@ -146,6 +173,15 @@ CORS_ALLOWED_ORIGINS = [
 ] + [origin.strip() for origin in _cors_env.split(',') if origin.strip()]
 CORS_ALLOW_CREDENTIALS = True
 # tinanggal yung CORS_ALLOW_ALL_ORIGINS = DEBUG, whitelist na lang talaga
+
+# Same list for CSRF-protected endpoints/admin pages.
+# Kapag phone testing sa Wi-Fi, ilagay yung http://PC_IP:5173 sa .env.
+_csrf_env = os.environ.get('CSRF_TRUSTED_ORIGINS', '')
+CSRF_TRUSTED_ORIGINS = [
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+] + [origin.strip() for origin in _csrf_env.split(',') if origin.strip()]
+
 CORS_ALLOW_HEADERS = [
     'accept',
     'accept-encoding',
@@ -206,8 +242,72 @@ else:
     }
 RATELIMIT_USE_CACHE = 'default'
 
+# ===== Channels (WebSockets) =====
+# Redis channel layer in production (set REDIS_URL); in-memory for local dev so
+# the chat runs without Redis. NOTE: the in-memory layer is single-process only
+# — production must use Redis + multiple ASGI workers to scale.
+if _redis_url:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {'hosts': [_redis_url]},
+        }
+    }
+else:
+    CHANNEL_LAYERS = {
+        'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'}
+    }
+
 # LocMemCache works fine for development; silence the ratelimit warnings
 SILENCED_SYSTEM_CHECKS = ['django_ratelimit.W001', 'django_ratelimit.E003']
+
+# ===== Messages Assistant =====
+# Backend-only config. Never expose keys to the frontend.
+# Provider switch: 'gemini' (cloud, used in production) or 'ollama' (local LLM
+# for development). Defaults to 'gemini' so production/CI behaviour is unchanged;
+# set ASSISTANT_PROVIDER=ollama in your local .env to develop offline.
+ASSISTANT_PROVIDER = os.environ.get('ASSISTANT_PROVIDER', 'gemini').strip().lower()
+
+# Gemini (cloud)
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
+GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
+
+# Ollama (local) — used when ASSISTANT_PROVIDER=ollama. No API key required.
+# Default model targets a ~6 GB-VRAM GPU (e.g. RTX 4050 laptop): a 7B Q4 model
+# is the sweet spot for responsive replies. num_ctx caps the prompt window so
+# the KV cache also fits in VRAM.
+OLLAMA_BASE_URL = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')
+OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'qwen2.5:7b-instruct')
+OLLAMA_NUM_CTX = int(os.environ.get('OLLAMA_NUM_CTX', '4096'))
+# Hard cap (seconds) on the assistant HTTP call so a hung model can't tie up a worker.
+OLLAMA_TIMEOUT = int(os.environ.get('OLLAMA_TIMEOUT', '30'))
+
+
+# ===== Logging =====
+# Console logging so failures and the channels/daphne lifecycle are visible.
+# Without this, unhandled errors were silent — which made the earlier server
+# crash hard to diagnose. INFO in dev, WARNING in production.
+_LOG_LEVEL = 'INFO' if DEBUG else 'WARNING'
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'standard': {'format': '[{asctime}] {levelname} {name}: {message}', 'style': '{'},
+    },
+    'handlers': {
+        'console': {'class': 'logging.StreamHandler', 'formatter': 'standard'},
+    },
+    'root': {'handlers': ['console'], 'level': 'WARNING'},
+    'loggers': {
+        'django': {'handlers': ['console'], 'level': _LOG_LEVEL, 'propagate': False},
+        # 500s / request errors always logged, even in production.
+        'django.request': {'handlers': ['console'], 'level': 'ERROR', 'propagate': False},
+        'daphne': {'handlers': ['console'], 'level': _LOG_LEVEL, 'propagate': False},
+        'channels': {'handlers': ['console'], 'level': _LOG_LEVEL, 'propagate': False},
+        # Our own apps (consumers, drf handler, etc.).
+        'apps': {'handlers': ['console'], 'level': _LOG_LEVEL, 'propagate': False},
+    },
+}
 
 
 # ===== XSS Defense-in-Depth Headers =====
@@ -225,6 +325,19 @@ SECURE_BROWSER_XSS_FILTER = True
 
 # Referrer policy — don't leak full URLs to external sites
 SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
+
+# ===== Session & CSRF cookie hardening =====
+# HttpOnly: cookies are not readable from JS (mitigates theft via any XSS).
+# SameSite=Lax: cookies aren't sent on cross-site requests (CSRF defense-in-depth).
+# The Secure flag is added in the production HTTPS block below.
+# NOTE: the REST API authenticates with JWT bearer tokens in the Authorization
+# header (not cookies), so CSRF is structurally N/A to those endpoints —
+# CsrfViewMiddleware + these flags protect the session-cookie surface
+# (Django admin and any session-authenticated views).
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = 'Lax'
+CSRF_COOKIE_HTTPONLY = True
+CSRF_COOKIE_SAMESITE = 'Lax'
 
 # Production-only HTTPS enforcement
 if not DEBUG:

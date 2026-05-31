@@ -26,7 +26,7 @@ class ItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = Item
         fields = [
-            'id', 'name', 'category', 'quantity', 'status', 'location',
+            'id', 'name', 'brand', 'category', 'quantity', 'status', 'location',
             'description', 'imageUrl', 'accessLevel', 'dateAdded',
             'isLowStock', 'isOutOfStock', 'isReturnable', 'priority',
             'borrowDuration', 'borrowDurationUnit',
@@ -59,19 +59,25 @@ class ItemCreateUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Item
         fields = [
-            'name', 'category', 'quantity', 'status', 'location',
+            'name', 'brand', 'category', 'quantity', 'status', 'location',
             'description', 'imageUrl', 'accessLevel', 'isReturnable', 'priority',
             'borrowDuration', 'borrowDurationUnit',
         ]
 
     def validate_quantity(self, value):
-        if value < 1:
-            raise serializers.ValidationError('Quantity must be at least 1.')
+        if value < 0:
+            raise serializers.ValidationError('Quantity cannot be negative.')
         return value
 
     def validate_name(self, value):
         # strip_tags para di ma-inject ng <script> sa name haha
         return strip_tags(value).strip()
+
+    def validate_brand(self, value):
+        """Strip HTML tags to prevent stored XSS in print/export views."""
+        if value:
+            return strip_tags(value).strip()
+        return value
 
     def validate_description(self, value):
         """Strip HTML tags to prevent stored XSS."""
@@ -83,5 +89,16 @@ class ItemCreateUpdateSerializer(serializers.ModelSerializer):
         """Strip HTML tags to prevent stored XSS in print/export views."""
         if value:
             return strip_tags(value).strip()
+        return value
+
+    def validate_accessLevel(self, value):
+        """A user cannot mark an item at an access level above their own role
+        (e.g. STAFF cannot create ADMIN-only items)."""
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if user and value and not user.has_min_role(value):
+            raise serializers.ValidationError(
+                'You cannot assign an access level higher than your own role.'
+            )
         return value
 

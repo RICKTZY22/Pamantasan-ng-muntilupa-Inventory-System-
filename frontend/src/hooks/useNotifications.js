@@ -1,125 +1,77 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import notificationService from '../services/notificationService';
+import useNotificationStore, { selectUnreadCount } from '../store/notificationStore';
 
-// dropped from 10s to 5s — users were complaining notifs felt "late"
-const POLL_INTERVAL = 5000;
+// Notifications arrive live over the chat WebSocket (see chatSocket.js).
+// This slow poll is only a safety net for events missed during a socket gap —
+// the WS reconnect handler already resyncs, so 60s is plenty (was 5s polling).
+const SAFETY_POLL_INTERVAL = 60000;
+
+const hasToken = () => {
+    try {
+        const stored = localStorage.getItem('auth-storage');
+        const parsed = stored ? JSON.parse(stored) : null;
+        // Tokens are no longer persisted (access is in memory, refresh is an
+        // HttpOnly cookie). Gate the safety poll on the persisted auth flag.
+        return Boolean(parsed?.state?.isAuthenticated);
+    } catch { return false; }
+};
 
 const useNotifications = () => {
-    const [notifications, setNotifications] = useState([]);
-    const [unreadCount, setUnreadCount] = useState(0);
-    const [loading, setLoading] = useState(false);
+    const notifications = useNotificationStore((s) => s.notifications);
+    const unreadCount = useNotificationStore(selectUnreadCount);
+    const setAll = useNotificationStore((s) => s.setAll);
+    const storeMarkRead = useNotificationStore((s) => s.markRead);
+    const storeMarkAllRead = useNotificationStore((s) => s.markAllRead);
+    const storeRemove = useNotificationStore((s) => s.removeOne);
+    const storeClear = useNotificationStore((s) => s.clear);
     const intervalRef = useRef(null);
-    const hasFetchedOnce = useRef(false);
 
     const fetchNotifications = useCallback(async () => {
         try {
-            // only show the spinner on the very first load,
-            // otherwise the dropdown flickers every 5s which is annoying
-            if (!hasFetchedOnce.current) setLoading(true);
-
             const data = await notificationService.getAll();
-            const list = Array.isArray(data) ? data : data.results || [];
-            setNotifications(list);
-            setUnreadCount(list.filter(n => !n.isRead).length);
-            hasFetchedOnce.current = true;
-        } catch (err) {
-            // swallow — UI handles empty state fine
-        } finally {
-            setLoading(false);
-        }
-    }, []);
-
-    // lightweight poll — skips setState if nothing actually changed,
-    // which avoids unnecessary re-renders in the dropdown
-    const pollNotifications = useCallback(async () => {
-        try {
-            const data = await notificationService.getAll();
-            const list = Array.isArray(data) ? data : data.results || [];
-            setNotifications(prev => {
-                if (prev.length !== list.length || JSON.stringify(prev.map(n => n.id)) !== JSON.stringify(list.map(n => n.id))) {
-                    return list;
-                }
-                const hasReadChanges = prev.some((n, i) => list[i] && n.isRead !== list[i].isRead);
-                return hasReadChanges ? list : prev;
-            });
-            setUnreadCount(list.filter(n => !n.isRead).length);
+            setAll(Array.isArray(data) ? data : data.results || []);
         } catch {
-            // polling failure is fine, next tick will retry
+            // empty/error state is handled by the UI; next sync will retry
         }
-    }, []);
+    }, [setAll]);
 
+    // Optimistic: update the store first for instant feedback, then persist.
+    // A failed call self-heals on the next WS resync / safety poll.
     const markAsRead = useCallback(async (id) => {
-        try {
-            await notificationService.markAsRead(id);
-            setNotifications(prev =>
-                prev.map(n => n.id === id ? { ...n, isRead: true } : n)
-            );
-            setUnreadCount(prev => Math.max(0, prev - 1));
-        } catch (err) {
-            console.warn('Failed to mark notification as read:', err);
-        }
-    }, []);
+        storeMarkRead(id);
+        try { await notificationService.markAsRead(id); } catch { /* resyncs */ }
+    }, [storeMarkRead]);
 
     const markAllAsRead = useCallback(async () => {
-        try {
-            await notificationService.markAllAsRead();
-            setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
-            setUnreadCount(0);
-        } catch (err) {
-            console.warn('markAllAsRead failed:', err);
-        }
-    }, []);
+        storeMarkAllRead();
+        try { await notificationService.markAllAsRead(); } catch { /* resyncs */ }
+    }, [storeMarkAllRead]);
 
     const deleteNotification = useCallback(async (id) => {
-        try {
-            await notificationService.deleteOne(id);
-            setNotifications(prev => {
-                const updated = prev.filter(n => n.id !== id);
-                setUnreadCount(updated.filter(n => !n.isRead).length);
-                return updated;
-            });
-        } catch (err) {
-            console.warn('delete notification failed:', err);
-        }
-    }, []);
+        storeRemove(id);
+        try { await notificationService.deleteOne(id); } catch { /* resyncs */ }
+    }, [storeRemove]);
 
     const clearAll = useCallback(async () => {
-        try {
-            await notificationService.clearAll();
-            setNotifications([]);
-            setUnreadCount(0);
-        } catch (err) {
-            // this was silently failing before because of backend queryset bug
-            console.warn('clearAll failed:', err);
-        }
-    }, []);
+        storeClear();
+        try { await notificationService.clearAll(); } catch { /* resyncs */ }
+    }, [storeClear]);
 
-    // poll only when logged in
     useEffect(() => {
-        const hasToken = () => {
-            try {
-                const stored = localStorage.getItem('auth-storage');
-                const parsed = stored ? JSON.parse(stored) : null;
-                return Boolean(parsed?.state?.token);
-            } catch { return false; }
-        };
-
         if (!hasToken()) return;
-
         fetchNotifications();
         intervalRef.current = setInterval(() => {
-            if (hasToken()) pollNotifications();
-            else clearInterval(intervalRef.current);
-        }, POLL_INTERVAL);
-        return () => {
-            if (intervalRef.current) clearInterval(intervalRef.current);
-        };
-    }, [fetchNotifications, pollNotifications]);
+            if (hasToken()) fetchNotifications();
+            else if (intervalRef.current) clearInterval(intervalRef.current);
+        }, SAFETY_POLL_INTERVAL);
+        return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+    }, [fetchNotifications]);
 
     return {
         notifications,
         unreadCount,
-        loading,
+        loading: false,
         fetchNotifications,
         markAsRead,
         markAllAsRead,

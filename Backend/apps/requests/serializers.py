@@ -2,41 +2,7 @@ from rest_framework import serializers
 from django.utils import timezone
 from django.utils.html import strip_tags
 from typing import Optional
-from .models import Request, Comment, Notification
-from apps.authentication.serializers import UserSerializer
-
-
-# HACK: naka-nest yung CommentSerializer sa loob ng RequestSerializer
-# medyo mabigat pero kailangan para makita agad yung comments sa request detail
-class CommentSerializer(serializers.ModelSerializer):
-
-    author = UserSerializer(read_only=True)
-    authorName = serializers.SerializerMethodField()
-    timestamp = serializers.DateTimeField(source='created_at', read_only=True)
-
-    class Meta:
-        model = Comment
-        fields = ['id', 'author', 'authorName', 'text', 'timestamp']
-        read_only_fields = ['id', 'author', 'authorName', 'timestamp']
-
-    def get_authorName(self, obj) -> str:
-        return obj.author.get_full_name() or obj.author.username
-
-
-class CommentCreateSerializer(serializers.ModelSerializer):
-
-    text = serializers.CharField(max_length=2000)
-
-    class Meta:
-        model = Comment
-        fields = ['text']
-
-    def validate_text(self, value):
-        """Strip HTML tags and enforce minimum content length."""
-        cleaned = strip_tags(value).strip()
-        if len(cleaned) < 1:
-            raise serializers.ValidationError('Comment cannot be empty.')
-        return cleaned
+from .models import Request, Notification
 
 
 class RequestSerializer(serializers.ModelSerializer):
@@ -51,26 +17,34 @@ class RequestSerializer(serializers.ModelSerializer):
     approvedAt = serializers.DateTimeField(source='approved_at', read_only=True)
     rejectionReason = serializers.CharField(source='rejection_reason', read_only=True)
     returnedAt = serializers.DateTimeField(source='returned_at', read_only=True)
+    returnRequestedAt = serializers.DateTimeField(source='return_requested_at', read_only=True)
+    returnRequestedByName = serializers.SerializerMethodField()
+    returnConfirmedByName = serializers.SerializerMethodField()
     isReturnable = serializers.SerializerMethodField()
     isOverdue = serializers.SerializerMethodField()
     borrowDuration = serializers.SerializerMethodField()
     borrowDurationUnit = serializers.SerializerMethodField()
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
-    comments = CommentSerializer(many=True, read_only=True)
 
     class Meta:
         model = Request
         fields = [
             'id', 'item', 'itemName', 'requestedBy', 'requestedById', 'requestedByStudentId',
             'quantity', 'purpose', 'status', 'priority', 'requestDate', 'expectedReturn',
-            'approvedBy', 'approvedAt', 'rejectionReason', 'returnedAt', 'isReturnable',
-            'isOverdue', 'borrowDuration', 'borrowDurationUnit', 'createdAt', 'comments',
+            'approvedBy', 'approvedAt', 'rejectionReason', 'returnedAt',
+            'returnRequestedAt', 'returnRequestedByName', 'returnConfirmedByName',
+            'isReturnable', 'isOverdue', 'borrowDuration', 'borrowDurationUnit', 'createdAt',
         ]
         read_only_fields = [
             'id', 'requestedBy', 'requestedById', 'requestedByStudentId',
             'requestDate', 'approvedBy', 'approvedAt',
-            'rejectionReason', 'returnedAt', 'isReturnable', 'isOverdue',
-            'borrowDuration', 'borrowDurationUnit', 'createdAt', 'comments', 'itemName',
+            'rejectionReason', 'returnedAt', 'returnRequestedAt',
+            'returnRequestedByName', 'returnConfirmedByName',
+            'isReturnable', 'isOverdue',
+            'borrowDuration', 'borrowDurationUnit', 'createdAt', 'itemName',
+            # State/identity fields only ever change via the action endpoints,
+            # never a direct write — read-only as defense in depth.
+            'status', 'priority', 'item', 'quantity',
         ]
 
     def get_requestedBy(self, obj) -> str:
@@ -91,8 +65,20 @@ class RequestSerializer(serializers.ModelSerializer):
         except (AttributeError, obj.item.DoesNotExist):
             return False
 
+    def get_returnRequestedByName(self, obj) -> Optional[str]:
+        if obj.return_requested_by:
+            return obj.return_requested_by.get_full_name() or obj.return_requested_by.username
+        return None
+
+    def get_returnConfirmedByName(self, obj) -> Optional[str]:
+        if obj.return_confirmed_by:
+            return obj.return_confirmed_by.get_full_name() or obj.return_confirmed_by.username
+        return None
+
     def get_isOverdue(self, obj) -> bool:
-        if obj.status not in ('APPROVED', 'COMPLETED'):
+        # RETURN_PENDING still counts: the item is physically out until a staff
+        # member confirms receipt, so a pending return can still be overdue.
+        if obj.status not in ('APPROVED', 'COMPLETED', 'RETURN_PENDING'):
             return False
         if not obj.expected_return:
             return False
@@ -113,7 +99,7 @@ class RequestSerializer(serializers.ModelSerializer):
 
 class RequestCreateSerializer(serializers.ModelSerializer):
 
-    itemName = serializers.CharField(source='item_name')
+    itemName = serializers.CharField(source='item_name', required=False, allow_blank=True)
     expectedReturn = serializers.DateTimeField(source='expected_return', required=False, allow_null=True)
 
     class Meta:
@@ -126,10 +112,26 @@ class RequestCreateSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
-        """Ensure requested quantity does not exceed available stock."""
+        """Validate item visibility, availability, and requested quantity."""
         item = attrs.get('item')
         quantity = attrs.get('quantity', 1)
-        if item and quantity > item.quantity:
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+
+        if not item:
+            return attrs
+
+        if user and not user.has_min_role(item.access_level):
+            raise serializers.ValidationError({
+                'item': 'You are not allowed to request this item.'
+            })
+
+        if item.status != 'AVAILABLE':
+            raise serializers.ValidationError({
+                'item': 'Only available items can be requested.'
+            })
+
+        if quantity > item.quantity:
             raise serializers.ValidationError({
                 'quantity': f'Only {item.quantity} available in stock. You requested {quantity}.'
             })

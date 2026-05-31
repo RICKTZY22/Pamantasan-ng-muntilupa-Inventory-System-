@@ -13,6 +13,7 @@ const useUsers = () => {
         total: 0,
         active: 0,
         inactive: 0,
+        flagged: 0,
         admins: 0,
         staff: 0,
         faculty: 0,
@@ -38,12 +39,13 @@ const useUsers = () => {
             // Single-pass stats computation (was 7 separate .filter() calls)
             const counts = items.reduce((acc, u) => {
                 if (u.isActive) acc.active++; else acc.inactive++;
+                if (u.isFlagged) acc.flagged++;
                 if (u.role === ROLES.ADMIN) acc.admins++;
                 else if (u.role === ROLES.STAFF) acc.staff++;
                 else if (u.role === ROLES.FACULTY) acc.faculty++;
                 else acc.students++;
                 return acc;
-            }, { active: 0, inactive: 0, admins: 0, staff: 0, faculty: 0, students: 0 });
+            }, { active: 0, inactive: 0, flagged: 0, admins: 0, staff: 0, faculty: 0, students: 0 });
             setStats({ total: items.length, ...counts });
         } catch (err) {
             setError(err.response?.data?.detail || 'Failed to fetch users');
@@ -59,6 +61,7 @@ const useUsers = () => {
                 total: data.total || 0,
                 active: data.active || 0,
                 inactive: data.inactive || 0,
+                flagged: data.flagged || 0,
                 admins: data.byRole?.admin || 0,
                 staff: data.byRole?.staff || 0,
                 faculty: data.byRole?.faculty || 0,
@@ -145,8 +148,16 @@ const useUsers = () => {
         setError(null);
         try {
             const result = await userService.unflagUser(userId);
+            const serverUser = result.user;
             setUsers(prev => prev.map(u =>
-                u.id === userId ? { ...u, isFlagged: false, overdueCount: 0 } : u
+                u.id === userId
+                    ? {
+                        ...u,
+                        ...serverUser,
+                        isFlagged: serverUser?.isFlagged ?? false,
+                        overdueCount: serverUser?.overdueCount ?? u.overdueCount,
+                    }
+                    : u
             ));
             return { success: true, message: result.message };
         } catch (err) {

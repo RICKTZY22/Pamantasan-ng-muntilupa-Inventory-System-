@@ -10,13 +10,16 @@ import {
     CaretLeft as ChevronLeft,
     List as Menu,
     Users,
+    ChatCircle as MessageIcon,
     X
 } from '@phosphor-icons/react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import useAuthStore from '../../store/authStore';
+import { Avatar } from '../ui';
 import plmunLogo from '../../assets/images/logo.png';
 import { ROLES, hasMinRole } from '../../utils/roles';
 import { requestService } from '../../services';
+import useChatStore, { selectUnreadTotal } from '../../store/chatStore';
 import { useEscapeKey, useFocusTrap, useBodyScrollLock, useIsMobile } from '../../hooks';
 
 const MotionAside = motion.aside;
@@ -30,7 +33,8 @@ const getNavGroups = (userRole) => {
             items: [
                 { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
                 { icon: Package, label: hasMinRole(userRole, ROLES.STAFF) ? 'Inventory' : 'Items', path: '/inventory' },
-                { icon: FileText, label: 'Requests', path: '/requests', badge: true },
+                { icon: FileText, label: 'Requests', path: '/requests', badgeType: 'pending' },
+                { icon: MessageIcon, label: 'Messages', path: '/messages', badgeType: 'messages' },
             ]
         },
     ];
@@ -62,6 +66,7 @@ const Sidebar = ({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) => {
     const location = useLocation();
     const { user, logout } = useAuthStore();
     const [pendingCount, setPendingCount] = useState(0);
+    const messagesUnread = useChatStore(selectUnreadTotal);
     const isMobile = useIsMobile();
     const reduce = useReducedMotion();
     // Only trap focus / lock scroll / bind Escape while the mobile drawer is open.
@@ -74,25 +79,25 @@ const Sidebar = ({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) => {
         setMobileOpen?.(false);
     }, [location.pathname, setMobileOpen]);
 
-    // pending count para sa badge ng Requests link
-    // TODO: ang daming api call nito every minute, gawing shared state na lang
+    // Badge count lang kailangan dito, kaya stats endpoint ang gamitin.
     const fetchPendingCount = useCallback(async () => {
         try {
-            const data = await requestService.getAll();
-            const items = Array.isArray(data) ? data : data.results || [];
-            const isStaffPlus = hasMinRole(user?.role, ROLES.STAFF);
-            const pending = items.filter(r =>
-                r.status === 'PENDING' && (isStaffPlus || r.requestedById === user?.id)
-            ).length;
-            setPendingCount(pending);
+            const stats = await requestService.getStats();
+            setPendingCount(Number(stats?.pending || 0));
         } catch { /* non-critical */ }
-    }, [user?.role, user?.id]);
+    }, []);
 
     useEffect(() => {
         fetchPendingCount();
         const interval = setInterval(fetchPendingCount, 60000);
         return () => clearInterval(interval);
     }, [fetchPendingCount]);
+
+    const badgeCountFor = (item) => {
+        if (item.badgeType === 'pending') return pendingCount;
+        if (item.badgeType === 'messages') return messagesUnread;
+        return 0;
+    };
 
     const handleLogout = () => {
         logout();
@@ -205,8 +210,8 @@ const Sidebar = ({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) => {
                                                     <span className="text-[13px] truncate">{item.label}</span>
                                                 )}
 
-                                                {/* Pending badge */}
-                                                {item.badge && pendingCount > 0 && (
+                                                {/* Count badge (pending requests / unread messages) */}
+                                                {badgeCountFor(item) > 0 && (
                                                     <span className={`
                                                         ${collapsed ? 'absolute -top-0.5 -right-0.5' : 'ml-auto'}
                                                         min-w-[18px] h-[18px] px-1
@@ -214,7 +219,7 @@ const Sidebar = ({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) => {
                                                         text-[10px] font-bold rounded-full
                                                         bg-red-500 text-white
                                                     `}>
-                                                        {pendingCount > 99 ? '99+' : pendingCount}
+                                                        {badgeCountFor(item) > 99 ? '99+' : badgeCountFor(item)}
                                                     </span>
                                                 )}
 
@@ -229,9 +234,9 @@ const Sidebar = ({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) => {
                                                         hidden md:block
                                                     ">
                                                         {item.label}
-                                                        {item.badge && pendingCount > 0 && (
+                                                        {badgeCountFor(item) > 0 && (
                                                             <span className="ml-1.5 bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">
-                                                                {pendingCount}
+                                                                {badgeCountFor(item)}
                                                             </span>
                                                         )}
                                                     </div>
@@ -248,17 +253,7 @@ const Sidebar = ({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) => {
                 {/* User Section — pinned at bottom */}
                 <div className="p-2 border-t border-gray-100 dark:border-gray-800 flex-shrink-0">
                     <div className={`flex items-center gap-2 p-2 rounded-lg ${collapsed ? 'justify-center' : ''}`}>
-                        {user?.avatar ? (
-                            <img
-                                src={user.avatar}
-                                alt="Profile"
-                                className="w-8 h-8 rounded-full object-cover flex-shrink-0"
-                            />
-                        ) : (
-                            <div className="w-8 h-8 rounded-full bg-accent/10 dark:bg-accent/20 flex items-center justify-center text-accent font-semibold text-sm flex-shrink-0">
-                                {user?.fullName?.charAt(0) || 'U'}
-                            </div>
-                        )}
+                        <Avatar src={user?.avatar} name={user?.fullName} size={32} />
                         {!collapsed && (
                             <div className="flex-1 min-w-0">
                                 <p className="font-medium text-xs text-gray-900 dark:text-gray-100 truncate">{user?.fullName || 'User'}</p>

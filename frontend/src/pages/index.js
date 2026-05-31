@@ -1,6 +1,7 @@
 export { default as Dashboard } from './Dashboard';
 export { default as Inventory } from './Inventory';
 export { default as Requests } from './Requests';
+export { default as Messages } from './Messages';
 export { default as Reports } from './Reports';
 export { default as Login } from './Login';
 export { default as Register } from './Register';

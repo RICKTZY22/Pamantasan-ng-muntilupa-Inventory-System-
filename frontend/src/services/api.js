@@ -7,55 +7,39 @@ const api = axios.create({
     headers: {
         'Content-Type': 'application/json',
     },
+    // Send/receive the HttpOnly refresh cookie on auth calls.
+    withCredentials: true,
 });
 
-// kinukuha yung tokens directly from localStorage
-// kasi pag nag-import tayo ng authStore dito, mag-circular dependency
-// (authStore -> authService -> api -> authStore) kaya ganito na lang
-const getTokens = () => {
-    const authData = localStorage.getItem('auth-storage');
-    if (authData) {
-        try {
-            const { state } = JSON.parse(authData);
-            return {
-                access: state?.token,
-                refresh: state?.refreshToken,
-            };
-        } catch (e) {
-            // corrupted storage — treat as unauthenticated
-        }
-    }
-    return { access: null, refresh: null };
-};
+// Access token lives in MEMORY ONLY (never localStorage) so XSS can't read it.
+// authStore sets it on login / bootstrap; the response interceptor refreshes it.
+let accessToken = null;
+export const setAccessToken = (token) => { accessToken = token || null; };
+export const getAccessToken = () => accessToken;
 
-// Lazily import authStore to avoid circular dependency issues at module init time
+// Lazily import authStore to avoid a circular dependency at module init.
 const getAuthStore = () => import('../store/authStore').then(m => m.default ?? m);
 
-// lagay ng bearer token sa every request
+// Attach the in-memory access token to every request.
 api.interceptors.request.use(
     (config) => {
-        const { access } = getTokens();
-        if (access) {
-            config.headers.Authorization = `Bearer ${access}`;
+        if (accessToken) {
+            config.headers.Authorization = `Bearer ${accessToken}`;
         }
         return config;
     },
     (error) => { throw error; }
 );
 
-// Handle 401s by trying to refresh the access token
+// Handle 401s by refreshing via the HttpOnly cookie.
 let isRefreshing = false;
 let failedQueue = [];
 
-// mutex queue para sa sabay-sabay na 401 errors
-// kung walang 'to, mag 3 refresh requests na sabay-sabay when simultaneous calls fail
+// mutex queue para sa sabay-sabay na 401 errors — iisang refresh lang.
 const processQueue = (error, token = null) => {
     failedQueue.forEach(prom => {
-        if (error) {
-            prom.reject(error);
-        } else {
-            prom.resolve(token);
-        }
+        if (error) prom.reject(error);
+        else prom.resolve(token);
     });
     failedQueue = [];
 };
@@ -64,8 +48,10 @@ api.interceptors.response.use(
     (response) => response,
     async (error) => {
         const originalRequest = error.config;
+        // Never try to refresh the refresh call itself (prevents an infinite loop).
+        const isRefreshCall = originalRequest?.url?.includes('/auth/token/refresh/');
 
-        if (error.response?.status === 401 && !originalRequest._retry) {
+        if (error.response?.status === 401 && !originalRequest._retry && !isRefreshCall) {
             if (isRefreshing) {
                 return new Promise((resolve, reject) => {
                     failedQueue.push({ resolve, reject });
@@ -78,38 +64,31 @@ api.interceptors.response.use(
             originalRequest._retry = true;
             isRefreshing = true;
 
-            const { refresh } = getTokens();
+            try {
+                // Refresh token rides in the HttpOnly cookie — no body needed.
+                const response = await axios.post(
+                    `${API_URL}/auth/token/refresh/`,
+                    {},
+                    { withCredentials: true },
+                );
+                const { access } = response.data;
 
-            if (refresh) {
-                try {
-                    const response = await axios.post(`${API_URL}/auth/token/refresh/`, {
-                        refresh: refresh
-                    });
+                setAccessToken(access);
+                const store = await getAuthStore();
+                store.getState().setToken(access);  // keep WS/state in sync
 
-                    const { access } = response.data;
-
-                    // i-sync yung bagong token sa zustand
-                    const store = await getAuthStore();
-                    store.getState().setToken(access);
-
-                    processQueue(null, access);
-                    originalRequest.headers.Authorization = `Bearer ${access}`;
-
-                    return api(originalRequest);
-                } catch (refreshError) {
-                    processQueue(refreshError, null);
-                    // Trigger proper logout through the store (clears all state + listeners)
-                    const store = await getAuthStore();
-                    store.getState().logout();
-                    window.location.href = '/login';
-                    throw refreshError;
-                } finally {
-                    isRefreshing = false;
-                }
-            } else {
+                processQueue(null, access);
+                originalRequest.headers.Authorization = `Bearer ${access}`;
+                return api(originalRequest);
+            } catch (refreshError) {
+                processQueue(refreshError, null);
+                // Refresh cookie gone/expired → full logout.
                 const store = await getAuthStore();
                 store.getState().logout();
                 window.location.href = '/login';
+                throw refreshError;
+            } finally {
+                isRefreshing = false;
             }
         }
 

@@ -6,6 +6,18 @@ const authService = {
         return response.data;
     },
 
+    // Re-mint an access token from the HttpOnly refresh cookie (no body needed).
+    refresh: async () => {
+        const response = await api.post('/auth/token/refresh/', {});
+        return response.data;
+    },
+
+    // Blacklist the refresh token + clear the cookie. Best-effort (cookie sent automatically).
+    logout: async () => {
+        const response = await api.post('/auth/logout/', {});
+        return response.data;
+    },
+
     // used by the background profile refresh to pick up flag/active changes
     getProfile: async () => {
         const response = await api.get('/auth/profile/');
