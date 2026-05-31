@@ -20,11 +20,16 @@ Backend:
 - Channels/Daphne for WebSockets
 - PostgreSQL in production, SQLite-friendly local development
 - Redis channel layer in production when `REDIS_URL` is set
+- `drf-spectacular`, `django-cors-headers`, `django-ratelimit`, WhiteNoise, Gunicorn
+- Optional assistant providers through Gemini or local Ollama
 
 Frontend:
 - React 18, Vite, Tailwind CSS
 - Zustand for client state
 - Axios API clients and token refresh handling
+- WebSocket chat client for live conversations and presence
+- Phosphor Icons for interface icons
+- Recharts, QR code rendering, PDF/table export helpers, and motion utilities
 - Vitest for frontend tests
 
 ## Getting Started
