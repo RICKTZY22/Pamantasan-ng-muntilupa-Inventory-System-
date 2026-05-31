@@ -49,7 +49,7 @@ else {
     Write-Host "  [DB] PostgreSQL service not found - make sure it is installed and running." -ForegroundColor Red
 }
 
-# 1b. Ensure Ollama is running (local AI assistant). Skips cleanly if Ollama
+# 1b. Ensure Ollama is running (local assistant). Skips cleanly if Ollama
 #     isn't installed (e.g. when using the Gemini cloud provider).
 $ollamaCmd = Get-Command ollama -ErrorAction SilentlyContinue
 if ($ollamaCmd) {
@@ -59,14 +59,14 @@ if ($ollamaCmd) {
         $ollamaUp = $true
     } catch { $ollamaUp = $false }
     if (-not $ollamaUp) {
-        Write-Host "  [AI] Starting Ollama server..." -ForegroundColor Yellow
+        Write-Host "  [Assistant] Starting Ollama server..." -ForegroundColor Yellow
         Start-Process -FilePath $ollamaCmd.Source -ArgumentList "serve" -WindowStyle Hidden
         Start-Sleep -Seconds 2
     }
-    Write-Host "  [AI] Ollama is running OK" -ForegroundColor Green
+    Write-Host "  [Assistant] Ollama is running OK" -ForegroundColor Green
 }
 else {
-    Write-Host "  [AI] Ollama not installed - assistant will use the configured cloud provider." -ForegroundColor DarkGray
+    Write-Host "  [Assistant] Ollama not installed - assistant will use the configured cloud provider." -ForegroundColor DarkGray
 }
 
 # 2. Start Django backend in a new terminal window
