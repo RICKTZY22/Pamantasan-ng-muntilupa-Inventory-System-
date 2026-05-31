@@ -342,10 +342,13 @@ CSRF_COOKIE_SAMESITE = 'Lax'
 # Production-only HTTPS enforcement
 if not DEBUG:
     # Render handles SSL at the proxy level — if we enable SSL redirect,
-    # it causes an infinite loop. Only enable for non-Render deployments.
+    # it causes an infinite loop. CI also uses plain HTTP test requests.
     IS_RENDER = 'RENDER' in os.environ
-    if not IS_RENDER:
-        SECURE_SSL_REDIRECT = True
+    IS_CI = os.environ.get('CI', '').lower() == 'true'
+    SECURE_SSL_REDIRECT = (
+        os.environ.get('SECURE_SSL_REDIRECT', 'False' if (IS_RENDER or IS_CI) else 'True')
+        == 'True'
+    )
     # trust the proxy's forwarded proto header on Render
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SECURE_HSTS_SECONDS = 31536000      # 1 year
