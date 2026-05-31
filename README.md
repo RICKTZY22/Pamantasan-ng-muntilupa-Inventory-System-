@@ -92,6 +92,36 @@ python manage.py seed_demo
 
 This creates demo users for local testing. Override the demo password with `DEMO_PASSWORD` in your backend environment when needed.
 
+## Local Assistant With Ollama
+
+The Messages assistant can run locally through Ollama, so development does not require a Gemini API key.
+
+1. Install Ollama from `https://ollama.com/`.
+2. Pull the default local model:
+
+```bash
+ollama pull qwen2.5:7b-instruct
+```
+
+3. Start Ollama:
+
+```bash
+ollama serve
+```
+
+4. In `Backend/.env`, use:
+
+```env
+ASSISTANT_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=qwen2.5:7b-instruct
+OLLAMA_NUM_CTX=4096
+```
+
+5. Start the backend and frontend normally.
+
+For weaker machines, try `qwen2.5:3b-instruct`. For production, use `ASSISTANT_PROVIDER=gemini` and set `GEMINI_API_KEY` only in the hosting dashboard or local `.env`, never in source control.
+
 ## Tests
 
 ```bash
