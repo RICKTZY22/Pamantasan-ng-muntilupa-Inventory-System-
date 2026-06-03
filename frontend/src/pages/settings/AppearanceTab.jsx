@@ -39,7 +39,6 @@ const AppearanceTab = ({ theme, setTheme, backgroundEffect, setBackgroundEffect 
     return (
         <div className="space-y-5">
             <SettingsGroup title="Theme & color">
-                {/* Theme */}
                 <SettingCard icon={Sun} title="Theme" description="Light, dark, or follow your system" expandable defaultOpen>
                     <div className="grid grid-cols-3 gap-3">
                         {themeOptions.map((option) => {
@@ -65,7 +64,6 @@ const AppearanceTab = ({ theme, setTheme, backgroundEffect, setBackgroundEffect 
                     </div>
                 </SettingCard>
 
-                {/* Accent color */}
                 <SettingCard icon={Palette} title="Accent color" description={`Currently ${currentAccentLabel}`} expandable>
                     <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
                         {Object.entries(ACCENT_PRESETS).map(([key, preset]) => {
@@ -95,7 +93,6 @@ const AppearanceTab = ({ theme, setTheme, backgroundEffect, setBackgroundEffect 
                     </div>
                 </SettingCard>
 
-                {/* Background effects */}
                 <SettingCard icon={Sparkle} title="Background effects" description={`Currently ${currentEffectLabel}`} expandable>
                     <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
                         {BG_EFFECTS.map((effect) => {

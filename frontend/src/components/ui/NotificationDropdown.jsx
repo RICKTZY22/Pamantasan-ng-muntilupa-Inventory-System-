@@ -11,6 +11,7 @@ import {
     Trash as Trash2
 } from '@phosphor-icons/react';
 import useNotifications from '../../hooks/useNotifications';
+import { formatTimeAgo } from '../../utils/timeUtils';
 
 // Keyed to the backend Notification.Type choices (COMMENT, STATUS_CHANGE,
 // REMINDER, OVERDUE). SYSTEM is the fallback for anything unmapped.
@@ -37,7 +38,6 @@ const NotificationDropdown = () => {
         fetchNotifications,
     } = useNotifications();
 
-    // Close dropdown when clicking outside
     useEffect(() => {
         const handleClickOutside = (event) => {
             if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
@@ -82,19 +82,9 @@ const NotificationDropdown = () => {
         if (route) navigate(route);
     };
 
-    const getTimeAgo = (dateStr) => {
-        if (!dateStr) return '';
-        const diff = Date.now() - new Date(dateStr).getTime();
-        if (diff < 60000) return 'Just now';
-        if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-        if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-        const date = new Date(dateStr);
-        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    };
-
     return (
         <div className="relative" ref={dropdownRef}>
-            {/* Bell Button */}
+            {/* Bell trigger */}
             <button
                 onClick={handleToggle}
                 className="relative p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
@@ -107,10 +97,9 @@ const NotificationDropdown = () => {
                 )}
             </button>
 
-            {/* Dropdown Panel */}
             {isOpen && (
                 <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white dark:bg-gray-800 rounded-2xl shadow-xl border border-gray-100 dark:border-gray-700 z-50 overflow-hidden">
-                    {/* Header */}
+                    {/* Dropdown header */}
                     <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
                         <h3 className="font-bold text-gray-900 dark:text-white">Notifications</h3>
                         <div className="flex items-center gap-2">
@@ -133,7 +122,7 @@ const NotificationDropdown = () => {
                         </div>
                     </div>
 
-                    {/* Notifications List */}
+                    {/* Notification rows */}
                     <div className="max-h-96 overflow-y-auto">
                         {notifications.length === 0 ? (
                             <div className="py-12 text-center">
@@ -152,27 +141,23 @@ const NotificationDropdown = () => {
                                             }`}
                                         onClick={() => handleNotificationClick(notification)}
                                     >
-                                        {/* Icon */}
                                         <div className={`w-10 h-10 rounded-full ${iconConfig.bg} flex items-center justify-center flex-shrink-0`}>
                                             <IconComponent size={18} className={iconConfig.color} />
                                         </div>
 
-                                        {/* Content */}
                                         <div className="flex-1 min-w-0">
                                             <p className={`text-sm ${!notification.isRead ? 'font-semibold' : 'font-medium'} text-gray-900 dark:text-gray-100 leading-snug`}>
                                                 {notification.message}
                                             </p>
                                             <p className="text-xs text-gray-400 mt-1">
-                                                {getTimeAgo(notification.createdAt)}
+                                                {formatTimeAgo(notification.createdAt)}
                                             </p>
                                         </div>
 
-                                        {/* Unread indicator */}
                                         {!notification.isRead && (
                                             <div className="w-2 h-2 bg-primary rounded-full flex-shrink-0 mt-2" />
                                         )}
 
-                                        {/* Delete single */}
                                         <button
                                             onClick={(e) => {
                                                 e.stopPropagation();

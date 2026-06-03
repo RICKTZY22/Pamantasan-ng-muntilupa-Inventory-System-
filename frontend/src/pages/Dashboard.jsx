@@ -37,8 +37,6 @@ const Dashboard = () => {
         checkOverdue();
     }, [fetchInventory, fetchInventoryStats, fetchRequests, checkOverdue]);
 
-    // low stock items
-    // TODO: pwede ba 'tong i-cache sa zustand para di na paulit-ulit mag fetch?
     useEffect(() => {
         const fetchLowStock = async () => {
             try {
@@ -64,8 +62,6 @@ const Dashboard = () => {
         return Object.entries(categories).map(([name, value]) => ({ name, value }));
     }, [inventory]);
 
-    // monthly buckets (6 months) feeding the activity hero chart
-    // medyo matagal 'tong i-compute pag maraming items kaya naka-memo
     const monthlyData = React.useMemo(() => {
         const now = new Date();
         const allCategories = [...new Set(inventory.map(item => item.category || 'OTHER'))];
@@ -141,7 +137,6 @@ const Dashboard = () => {
     }, [myRequests]);
     const activeBorrows = useMemo(() => myRequests.filter(r => r.status === 'APPROVED' && r.isReturnable && r.expectedReturn), [myRequests]);
 
-    // favorites ng user, naka-save sa localStorage
     const [favorites, setFavorites] = useState([]);
     useEffect(() => {
         if (!user?.id) return;
@@ -211,7 +206,6 @@ const Dashboard = () => {
                 <PageHeader firstName={firstName} today={today} subtitle={facultySubtitle} />
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    {/* Main column */}
                     <div className="lg:col-span-2 space-y-6">
                         <div className="grid grid-cols-2 gap-4">
                             <StatChip icon={Clock} value={myStats.pending} label="Pending" tone="amber" />
@@ -239,7 +233,6 @@ const Dashboard = () => {
                         />
                     </div>
 
-                    {/* Right rail */}
                     <div className="space-y-6">
                         <ScheduleRail
                             title="Active Borrows"
@@ -332,7 +325,7 @@ const Dashboard = () => {
             )}
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Main column */}
+                {/* Main dashboard charts */}
                 <div className="lg:col-span-2 space-y-6">
                     <div className="grid grid-cols-2 gap-4">
                         <StatChip icon={Package} value={total} label="Total Items" tone="emerald" hint={`${available} available`} onClick={() => navigate('/inventory')} />
@@ -361,7 +354,7 @@ const Dashboard = () => {
                     />
                 </div>
 
-                {/* Right rail */}
+                {/* Side rail */}
                 <div className="space-y-6">
                     <ScheduleRail
                         title="Due Soon"

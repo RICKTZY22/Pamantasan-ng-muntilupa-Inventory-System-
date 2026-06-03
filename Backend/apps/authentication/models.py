@@ -1,11 +1,8 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 
-
-# TODO: mag-add ng student_year field para alam kung 1st yr, 2nd yr, etc.
-# pinag-usapan na namin ni sir pero di pa priority
 class User(AbstractUser):
-    """Custom user model. Ginamit AbstractUser kasi enough na yung default fields niya."""
+    """Custom user model with app roles and profile metadata."""
 
     class Role(models.TextChoices):
         STUDENT = 'STUDENT', 'Student'
@@ -61,11 +58,8 @@ class User(AbstractUser):
         return f"{self.get_full_name()} ({self.role})"
 
 
-# --- Audit log ---
-# dati wala 'to, hiningi ng IT head para may paper trail
-
 class AuditLog(models.Model):
-    """Audit trail para ma-track kung sino gumawa ng ano."""
+    """Audit trail for security-relevant user and inventory actions."""
 
     class Action(models.TextChoices):
         LOGIN            = 'Login',           'Login'
@@ -112,7 +106,7 @@ class AuditLog(models.Model):
         User, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='audit_logs',
     )
-    username   = models.CharField(max_length=150, blank=True)  # naka-snapshot kasi baka ma-delete yung user
+    username   = models.CharField(max_length=150, blank=True)
     details    = models.TextField(blank=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     timestamp  = models.DateTimeField(auto_now_add=True)

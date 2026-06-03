@@ -8,7 +8,6 @@ const ProfileTab = ({ user, profileForm, setProfileForm, handleProfileSave, upda
     const emailError = profileForm.email && !isValidEmail(profileForm.email) ? 'Enter a valid email address' : '';
     return (
         <div className="space-y-5">
-            {/* Avatar Section */}
             <div className="flex items-center gap-6 p-5 sm:p-6 bg-gray-50 dark:bg-gray-800/60 rounded-2xl border border-gray-200 dark:border-gray-700/60">
                 <div className="relative">
                     <Avatar src={user?.avatar} name={user?.fullName} size={96} gradient="from-accent to-secondary" className="ring-4 ring-accent/20" />
@@ -47,7 +46,6 @@ const ProfileTab = ({ user, profileForm, setProfileForm, handleProfileSave, upda
                 </div>
             </div>
 
-            {/* Profile Form */}
             <div className="rounded-lg border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800/40 p-4 sm:p-5">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <Input

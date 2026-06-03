@@ -14,8 +14,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Load .env file from the Backend root directory
 load_dotenv(BASE_DIR / '.env')
 
-# SECURITY: defaults to False — sa .env lang natin i-set True for local
-# nag-crash na 'to one time nung na-deploy ko na naka-True pa haha
 DEBUG = os.environ.get('DEBUG', 'False') == 'True'
 
 # SECURITY: no insecure fallback in production; dev fallback only when DEBUG=True
@@ -142,7 +140,7 @@ REST_FRAMEWORK = {
 # ===== JWT Settings =====
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),  # binawasan from 7 days
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),  # shortened from 7 days
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
@@ -165,17 +163,14 @@ REFRESH_COOKIE_MAX_AGE = int(SIMPLE_JWT['REFRESH_TOKEN_LIFETIME'].total_seconds(
 
 
 # ===== CORS Settings =====
-# whitelist lang - lagay ng production URLs sa CORS_ORIGINS env var (comma-separated)
 _cors_env = os.environ.get('CORS_ORIGINS', '')
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',
     'http://127.0.0.1:5173',
 ] + [origin.strip() for origin in _cors_env.split(',') if origin.strip()]
 CORS_ALLOW_CREDENTIALS = True
-# tinanggal yung CORS_ALLOW_ALL_ORIGINS = DEBUG, whitelist na lang talaga
 
 # Same list for CSRF-protected endpoints/admin pages.
-# Kapag phone testing sa Wi-Fi, ilagay yung http://PC_IP:5173 sa .env.
 _csrf_env = os.environ.get('CSRF_TRUSTED_ORIGINS', '')
 CSRF_TRUSTED_ORIGINS = [
     'http://localhost:5173',
@@ -224,7 +219,6 @@ MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Cache (required by django-ratelimit)
-# gamitin Redis sa production (set REDIS_URL env var), LocMemCache for dev lang
 _redis_url = os.environ.get('REDIS_URL')
 if _redis_url:
     CACHES = {

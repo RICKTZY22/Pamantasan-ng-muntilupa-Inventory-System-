@@ -72,7 +72,6 @@ const InventoryDetailModal = ({
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="Item Details" size="md">
             <div className="space-y-4" style={{ animation: 'fadeInUp 0.3s ease-out' }}>
-                {/* Image / Icon Header */}
                 <div className="relative rounded-xl overflow-hidden bg-gradient-to-br from-gray-100 to-gray-50 dark:from-gray-700 dark:to-gray-800">
                     {item.imageUrl ? (
                         <img
@@ -93,7 +92,6 @@ const InventoryDetailModal = ({
                     </div>
                 </div>
 
-                {/* Name + Category */}
                 <div>
                     <h2 className="text-xl font-bold text-gray-900 dark:text-white">{item.name}</h2>
                     <p className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-1.5 mt-1">
@@ -103,9 +101,7 @@ const InventoryDetailModal = ({
                     </p>
                 </div>
 
-                {/* Info Grid */}
                 <div className="grid grid-cols-2 gap-3">
-                    {/* Location */}
                     <div className="flex items-center gap-2.5 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-xl">
                         <div className="w-9 h-9 rounded-lg bg-blue-100 dark:bg-blue-800/40 flex items-center justify-center">
                             <MapPin size={18} className="text-blue-600 dark:text-blue-400" />
@@ -118,7 +114,6 @@ const InventoryDetailModal = ({
                         </div>
                     </div>
 
-                    {/* Quantity */}
                     <div className={`flex items-center gap-2.5 p-3 rounded-xl ${qtyStyles.bg}`}>
                         <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${qtyStyles.icon}`}>
                             <Package size={18} className={qtyStyles.text} />
@@ -137,7 +132,6 @@ const InventoryDetailModal = ({
                         </div>
                     </div>
 
-                    {/* Returnable */}
                     <div className={`flex items-center gap-2.5 p-3 rounded-xl ${item.isReturnable ? 'bg-purple-50 dark:bg-purple-900/20' : 'bg-gray-50 dark:bg-gray-800/50'}`}>
                         <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${item.isReturnable ? 'bg-purple-100 dark:bg-purple-800/40' : 'bg-gray-200 dark:bg-gray-700'}`}>
                             <RotateCcw size={18} className={item.isReturnable ? 'text-purple-600' : 'text-gray-400'} />
@@ -150,7 +144,6 @@ const InventoryDetailModal = ({
                         </div>
                     </div>
 
-                    {/* Access Level */}
                     <div className={`flex items-center gap-2.5 p-3 rounded-xl ${ac.bg}`}>
                         <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${ac.icon}`}>
                             <Shield size={18} className={ac.text} />
@@ -163,7 +156,6 @@ const InventoryDetailModal = ({
                         </div>
                     </div>
 
-                    {/* Priority */}
                     {(() => {
                         const pri = priorityStyles[item.priority] || priorityStyles.MEDIUM;
                         return (
@@ -182,7 +174,6 @@ const InventoryDetailModal = ({
                         );
                     })()}
 
-                    {/* Borrow Duration */}
                     {item.isReturnable && item.borrowDuration && (
                         <div className="flex items-center gap-2.5 p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl">
                             <div className="w-9 h-9 rounded-lg bg-indigo-100 dark:bg-indigo-800/40 flex items-center justify-center">
@@ -198,7 +189,6 @@ const InventoryDetailModal = ({
                     )}
                 </div>
 
-                {/* Description */}
                 {item.description && (
                     <div className="p-3 bg-gradient-to-br from-gray-50 to-gray-100/50 dark:from-gray-800 dark:to-gray-700/50 rounded-xl">
                         <p className="text-[10px] text-gray-500 dark:text-gray-400 uppercase font-bold mb-1">Description</p>
@@ -208,7 +198,6 @@ const InventoryDetailModal = ({
                     </div>
                 )}
 
-                {/* Status History / Metadata */}
                 {(item.statusNote || item.statusChangedAt || item.maintenanceEta) && (
                     <div className="p-3 bg-gradient-to-br from-slate-50 to-slate-100/50 dark:from-slate-800/50 dark:to-slate-700/30 rounded-xl space-y-2 border border-slate-200 dark:border-slate-700/50">
                         <p className="text-[10px] text-gray-500 dark:text-gray-400 uppercase font-bold flex items-center gap-1">
@@ -246,7 +235,6 @@ const InventoryDetailModal = ({
                     </div>
                 )}
 
-                {/* Quick Actions for staff+ */}
                 {isStaffPlus && item.status !== 'AVAILABLE' && (
                     <div className="flex gap-2">
                         {getStatusActions(item).map((action, idx) => {
@@ -266,7 +254,6 @@ const InventoryDetailModal = ({
                     </div>
                 )}
 
-                {/* Refer to chat + Close */}
                 <div className="flex gap-2">
                     <button
                         onClick={referInChat}

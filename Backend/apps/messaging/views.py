@@ -1,4 +1,8 @@
+import logging
+import threading
+
 from django.contrib.auth import get_user_model
+from django.db import close_old_connections
 from django.db.models import Prefetch
 from django.utils import timezone
 from django.utils.html import strip_tags
@@ -7,6 +11,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.common.images import validate_image_upload
 from apps.inventory.models import Item
 from .models import Conversation, ConversationMember, Message, can_message
 from . import assistant, presence, services
@@ -14,20 +19,38 @@ from . import assistant, presence, services
 User = get_user_model()
 PAGE = 50
 MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024  # 5 MB
+logger = logging.getLogger(__name__)
 
 
 def _validate_image(f):
-    """Return an error string if the upload isn't a safe image, else None."""
-    if f.size > MAX_ATTACHMENT_BYTES:
-        return 'Image must be 5 MB or smaller.'
+    """Return an error string if the upload isn't a safe image, else None.
+    Uses the shared allowlist validator (size + MIME/ext + decoded format)."""
+    return validate_image_upload(f, max_bytes=MAX_ATTACHMENT_BYTES)
+
+
+def _create_and_broadcast_auto_reply(conv_id, user_id, body):
+    close_old_connections()
     try:
-        from PIL import Image
-        img = Image.open(f)
-        img.verify()           # detect truncated/corrupt or non-image files
-        f.seek(0)              # rewind for the actual save
+        auto_reply = assistant.create_offline_auto_reply(conv_id, user_id, body)
+        if auto_reply:
+            payload, member_ids = auto_reply
+            services.broadcast_to_user_ids(member_ids, {'type': 'chat.message', 'message': payload})
     except Exception:
-        return 'Invalid or unsupported image file.'
-    return None
+        logger.exception('background offline auto-reply failed for conversation %s', conv_id)
+    finally:
+        close_old_connections()
+
+
+def _queue_offline_auto_reply(conv_id, user_id, body):
+    if not body:
+        return
+    thread = threading.Thread(
+        target=_create_and_broadcast_auto_reply,
+        args=(conv_id, user_id, body),
+        daemon=True,
+        name=f'offline-auto-reply-{conv_id}',
+    )
+    thread.start()
 
 
 class ConversationViewSet(viewsets.ViewSet):
@@ -123,11 +146,7 @@ class ConversationViewSet(viewsets.ViewSet):
         # sender has read their own message
         ConversationMember.objects.filter(conversation=conv, user=request.user).update(last_read_at=timezone.now())
         services.broadcast_to_members(conv, {'type': 'chat.message', 'message': services.serialize_message(msg)})
-        if body:
-            auto_reply = assistant.create_offline_auto_reply(conv.id, request.user.id, body)
-            if auto_reply:
-                payload, _member_ids = auto_reply
-                services.broadcast_to_members(conv, {'type': 'chat.message', 'message': payload})
+        _queue_offline_auto_reply(conv.id, request.user.id, body)
         return Response(services.serialize_message(msg), status=status.HTTP_201_CREATED)
 
     # ── POST /conversations/{id}/react/  { messageId, emoji } — toggle a reaction ──

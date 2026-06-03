@@ -3,6 +3,7 @@ from django.utils import timezone
 from django.utils.html import strip_tags
 from typing import Optional
 from .models import Request, Notification
+from .overdue import OUTSTANDING_STATUSES
 
 
 class RequestSerializer(serializers.ModelSerializer):
@@ -59,7 +60,7 @@ class RequestSerializer(serializers.ModelSerializer):
         return None
 
     def get_isReturnable(self, obj) -> bool:
-        # minsan nawawala yung item (deleted na), kaya may try-except
+        # If the item was deleted after the request was made, treat it safely.
         try:
             return obj.item.is_returnable
         except (AttributeError, obj.item.DoesNotExist):
@@ -76,9 +77,7 @@ class RequestSerializer(serializers.ModelSerializer):
         return None
 
     def get_isOverdue(self, obj) -> bool:
-        # RETURN_PENDING still counts: the item is physically out until a staff
-        # member confirms receipt, so a pending return can still be overdue.
-        if obj.status not in ('APPROVED', 'COMPLETED', 'RETURN_PENDING'):
+        if obj.status not in OUTSTANDING_STATUSES:
             return False
         if not obj.expected_return:
             return False

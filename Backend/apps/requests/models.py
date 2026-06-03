@@ -3,10 +3,7 @@ from django.conf import settings
 
 
 class Request(models.Model):
-    """Borrow request model.
-    Medyo maraming fields 'to pero kailangan yung bawat isa para
-    sa approval workflow at tracking ng returns.
-    """
+    """Borrow request model for approval and return tracking."""
 
     class Status(models.TextChoices):
         PENDING = 'PENDING', 'Pending'
@@ -102,10 +99,7 @@ class Request(models.Model):
 
 
 class Notification(models.Model):
-    """Notifications.
-    Naka-bulk_create 'to sa views para di mabagal kapag maraming
-    staff na kailangang i-notify.
-    """
+    """User notification model."""
 
     class Type(models.TextChoices):
         COMMENT = 'COMMENT', 'Comment'
@@ -144,6 +138,17 @@ class Notification(models.Model):
     class Meta:
         db_table = 'notifications'
         ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['recipient', 'request', 'type'],
+                condition=models.Q(
+                    is_read=False,
+                    request__isnull=False,
+                    type='OVERDUE',
+                ),
+                name='uniq_unread_overdue_notification',
+            ),
+        ]
 
     def __str__(self):
         return f"Notification for {self.recipient.get_full_name()}: {self.message[:50]}"

@@ -2,7 +2,7 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db import transaction
-from django.db.models import Q, F, Count
+from django.db.models import Q, F, Count, Case, When, IntegerField, Value
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
@@ -18,14 +18,8 @@ from .overdue import OUTSTANDING_STATUSES, run_overdue_scan
 from apps.authentication.models import User, AuditLog, log_action
 from apps.permissions import IsStaffOrAbove, IsAdmin
 
-
-# TODO(erick): the approve/reject actions share similar validation logic
-# pwede siguro gawing mixin para mas malinis
 class RequestViewSet(viewsets.ModelViewSet):
-    # Generic PUT/PATCH/DELETE are disabled — every state change goes through an
-    # explicit action (approve/reject/complete/cancel/return handshake). This blocks
-    # a user from PATCHing their own request (e.g. {"status":"APPROVED"}) to self-
-    # approve, or DELETE-ing it to hard-delete past the is_cleared soft-delete.
+    # State changes use explicit actions, not generic PATCH/DELETE.
     http_method_names = ['get', 'post', 'head', 'options']
 
     queryset = Request.objects.all()
@@ -41,8 +35,7 @@ class RequestViewSet(viewsets.ModelViewSet):
         return [permissions.IsAuthenticated()]
 
     def get_queryset(self):
-        # Reports/charts pass ?include_cleared=true to get ALL historical data.
-        # The active request list (Requests page) excludes cleared records.
+        # Reports can include cleared history; active lists hide it.
         include_cleared = self.request.query_params.get('include_cleared', '').lower() == 'true'
         if include_cleared:
             queryset = Request.objects.all()
@@ -65,6 +58,28 @@ class RequestViewSet(viewsets.ModelViewSet):
                 Q(item_name__icontains=search) |
                 Q(purpose__icontains=search)
             )
+
+        # Staff can switch between all requests and their own.
+        if self.request.query_params.get('mine', '').lower() == 'true':
+            queryset = queryset.filter(requested_by=user)
+
+        # Overdue pseudo-status tab: still-out items past their due date.
+        if self.request.query_params.get('overdue', '').lower() == 'true':
+            queryset = queryset.filter(
+                status__in=OUTSTANDING_STATUSES,
+                expected_return__lt=timezone.now(),
+            )
+
+        # Stable order for paginated pages.
+        queryset = queryset.annotate(
+            _priority_order=Case(
+                When(priority='HIGH', then=Value(3)),
+                When(priority='MEDIUM', then=Value(2)),
+                When(priority='LOW', then=Value(1)),
+                default=Value(0),
+                output_field=IntegerField(),
+            )
+        ).order_by('-_priority_order', '-created_at')
 
         return queryset.select_related('requested_by', 'approved_by', 'item')
 
@@ -97,7 +112,7 @@ class RequestViewSet(viewsets.ModelViewSet):
                    details=f'Created request for "{req.item_name}" (qty: {req.quantity})',
                    request=request)
 
-        # Notify all staff/admin about the new request (batched dedup + push).
+        # Notify all staff/admin about the new request (batched + live push).
         author_name = request.user.get_full_name() or request.user.username
         staff_users = User.objects.filter(
             role__in=['STAFF', 'ADMIN'], is_active=True,
@@ -117,8 +132,7 @@ class RequestViewSet(viewsets.ModelViewSet):
 
     @staticmethod
     def _ensure_pending(req, action_verb):
-        """Reject transitions on requests that aren't still PENDING.
-        Returns a Response to early-exit from the calling action, or None when OK."""
+        """Return an error response when a request is no longer pending."""
         if req.status != 'PENDING':
             return Response(
                 {'error': f'Only pending requests can be {action_verb}'},
@@ -127,10 +141,7 @@ class RequestViewSet(viewsets.ModelViewSet):
         return None
 
     def _get_locked_request(self, request, pk):
-        """Fetch a request with a row lock for state-changing transitions.
-        Prevents double-clicks or parallel staff actions from approving/rejecting
-        the same pending request at the same time.
-        """
+        """Fetch a request row locked for a state-changing action."""
         queryset = Request.objects.select_for_update().filter(is_cleared=False)
         if not request.user.has_min_role('STAFF'):
             queryset = queryset.filter(requested_by=request.user)
@@ -140,7 +151,7 @@ class RequestViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
-        """I-approve yung pending request, bawasan stock, at i-notify yung nag-request."""
+        """Approve a pending request, reserve stock, and notify the requester."""
         with transaction.atomic():
             req = self._get_locked_request(request, pk)
 
@@ -155,7 +166,6 @@ class RequestViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-            # atomically check at bawasan yung stock para walang race condition
             item = req.item
             from apps.inventory.models import Item
             updated = Item.objects.filter(
@@ -180,8 +190,6 @@ class RequestViewSet(viewsets.ModelViewSet):
             req.approved_by = request.user
             req.approved_at = timezone.now()
 
-            # pag consumable (di returnable), auto-complete na agad
-            # kasi wala namang ibabalik eh
             if not item.is_returnable:
                 req.status = 'COMPLETED'
             else:
@@ -199,7 +207,7 @@ class RequestViewSet(viewsets.ModelViewSet):
                    details=f'Approved request #{req.id} for "{req.item_name}" (qty: {req.quantity})',
                    request=request)
 
-        # Notify the requester about approval (deduped)
+        # Notify the requester about approval.
         approver_name = request.user.get_full_name() or request.user.username
         create_notif_if_new(
             recipient=req.requested_by,
@@ -234,7 +242,7 @@ class RequestViewSet(viewsets.ModelViewSet):
                    details=f'Rejected request #{req.id} for "{req.item_name}". Reason: {req.rejection_reason or "(none)"}',
                    request=request)
 
-        # Notify the requester about rejection (deduped)
+        # Notify the requester about rejection.
         rejector_name = request.user.get_full_name() or request.user.username
         reason_text = f' Reason: "{req.rejection_reason}"' if req.rejection_reason else ''
         create_notif_if_new(
@@ -249,33 +257,32 @@ class RequestViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def complete(self, request, pk=None):
-        req = self.get_object()
+        with transaction.atomic():
+            req = self._get_locked_request(request, pk)
 
-        # yung nag-request lang or staff/admin pwede mag-complete
-        if req.requested_by != request.user and not request.user.has_min_role('STAFF'):
-            return Response(
-                {'error': 'You can only complete your own requests'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+            if req.requested_by != request.user and not request.user.has_min_role('STAFF'):
+                return Response(
+                    {'error': 'You can only complete your own requests'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
 
-        if req.status != 'APPROVED':
-            return Response(
-                {'error': 'Only approved requests can be completed'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            if req.status != 'APPROVED':
+                return Response(
+                    {'error': 'Only approved requests can be completed'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
-        # Returnable items must go through the return handshake (request_return →
-        # confirm_return) so stock is restored — not silently force-completed.
-        if req.item.is_returnable:
-            return Response(
-                {'error': 'Returnable items must be returned (use the return flow), not completed.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            # Returnable items must go through the return handshake.
+            if req.item.is_returnable:
+                return Response(
+                    {'error': 'Returnable items must be returned (use the return flow), not completed.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
-        req.status = 'COMPLETED'
-        req.save()
+            req.status = 'COMPLETED'
+            req.save(update_fields=['status', 'updated_at'])
 
-        # Let the requester know (deduped)
+        # Let the requester know.
         completer = request.user.get_full_name() or request.user.username
         create_notif_if_new(
             recipient=req.requested_by,
@@ -289,22 +296,23 @@ class RequestViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
-        req = self.get_object()
+        with transaction.atomic():
+            req = self._get_locked_request(request, pk)
 
-        if req.requested_by != request.user and not request.user.has_min_role('STAFF'):
-            return Response(
-                {'error': 'You can only cancel your own requests'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+            if req.requested_by != request.user and not request.user.has_min_role('STAFF'):
+                return Response(
+                    {'error': 'You can only cancel your own requests'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
 
-        if req.status != 'PENDING':
-            return Response(
-                {'error': 'Only pending requests can be cancelled'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            if req.status != 'PENDING':
+                return Response(
+                    {'error': 'Only pending requests can be cancelled'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
-        req.status = 'CANCELLED'
-        req.save()
+            req.status = 'CANCELLED'
+            req.save(update_fields=['status', 'updated_at'])
 
         # Audit log
         log_action(AuditLog.OTHER, user=request.user,
@@ -319,28 +327,29 @@ class RequestViewSet(viewsets.ModelViewSet):
         the item is being returned. It moves to RETURN_PENDING and waits for a
         staff member to confirm physical receipt. Stock is NOT restored yet, so
         an accidental press here closes nothing."""
-        req = self.get_object()
+        with transaction.atomic():
+            req = self._get_locked_request(request, pk)
 
-        if req.requested_by != request.user and not request.user.has_min_role('STAFF'):
-            return Response(
-                {'error': 'You can only return your own borrowed items'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        if req.status not in ('APPROVED', 'COMPLETED'):
-            return Response(
-                {'error': 'Only approved or completed requests can be returned'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if not req.item.is_returnable:
-            return Response(
-                {'error': 'This item is not returnable'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            if req.requested_by != request.user and not request.user.has_min_role('STAFF'):
+                return Response(
+                    {'error': 'You can only return your own borrowed items'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            if req.status not in ('APPROVED', 'COMPLETED'):
+                return Response(
+                    {'error': 'Only approved or completed requests can be returned'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not req.item.is_returnable:
+                return Response(
+                    {'error': 'This item is not returnable'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
-        req.status = 'RETURN_PENDING'
-        req.return_requested_at = timezone.now()
-        req.return_requested_by = request.user
-        req.save(update_fields=['status', 'return_requested_at', 'return_requested_by', 'updated_at'])
+            req.status = 'RETURN_PENDING'
+            req.return_requested_at = timezone.now()
+            req.return_requested_by = request.user
+            req.save(update_fields=['status', 'return_requested_at', 'return_requested_by', 'updated_at'])
 
         log_action(AuditLog.REQUEST_RETURNED, user=request.user,
                    details=f'Return requested for request #{req.id} "{req.item_name}" — awaiting staff confirmation',
@@ -445,7 +454,6 @@ class RequestViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['delete'])
     def clear_completed(self, request):
-        # staff/admin lang pwede mag-bulk clear
         if not request.user.has_min_role('STAFF'):
             return Response(
                 {'error': 'Staff access required to clear requests'},
@@ -569,15 +577,12 @@ class RequestViewSet(viewsets.ModelViewSet):
 
 
 class NotificationViewSet(viewsets.ModelViewSet):
-    """Notifications ng user - scoped sa authenticated user lang."""
+    """Authenticated user's notifications."""
     serializer_class = NotificationSerializer
     permission_classes = [permissions.IsAuthenticated]
     http_method_names = ['get', 'post', 'patch', 'delete']
 
     def get_queryset(self):
-        # dati may [:100] slicing dito na sumisira sa clear_all at read_all
-        # kasi hindi mo pwede i-filter or i-delete yung sliced queryset sa Django
-        # pinagod ako ng bug na 'to nang ilang oras haha
         return (
             Notification.objects
             .filter(recipient=self.request.user)

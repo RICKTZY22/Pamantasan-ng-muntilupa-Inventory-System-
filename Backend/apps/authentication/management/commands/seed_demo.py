@@ -104,7 +104,7 @@ class Command(BaseCommand):
 
     @transaction.atomic
     def handle(self, *args, **options):
-        # Demo-only fallback para gumana agad sa reviewers; override via env for real deployments.
+        # Demo-only fallback for reviewers; override via env for real deployments.
         demo_password = os.environ.get(DEMO_PASSWORD_ENV, DEFAULT_DEMO_PASSWORD)
 
         if options['reset']:

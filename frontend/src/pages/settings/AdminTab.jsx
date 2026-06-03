@@ -69,7 +69,6 @@ const AdminTab = ({
     return (
         <AdminOnly showAccessDenied>
             <div className="space-y-6">
-                {/* System Controls */}
                 <SettingsGroup icon={Shield} title="System controls" description="Control who can sign in and which features are open">
                     <SettingCard
                         icon={Shield}
@@ -167,7 +166,6 @@ const AdminTab = ({
                     />
                 </SettingsGroup>
 
-                {/* Backup Settings */}
                 <SettingsGroup icon={Download} title="Backups" description="Schedule automatic backups or download one on demand">
                     <SettingCard
                         icon={Database}
@@ -234,7 +232,6 @@ const AdminTab = ({
                     />
                 </SettingsGroup>
 
-                {/* Audit Logs */}
                 <SettingsGroup icon={History} title="Audit logs" description="Track sensitive actions across the system">
                     <SettingCard
                         icon={History}
@@ -293,7 +290,6 @@ const AdminTab = ({
                     </SettingCard>
                 </SettingsGroup>
 
-                {/* System info + Quick actions */}
                 <SettingsGroup icon={Info} title="System information">
                     <SettingCard
                         icon={HardDrives}

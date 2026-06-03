@@ -28,14 +28,12 @@ const Modal = ({
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            {/* Backdrop */}
             <div
                 className="absolute inset-0 bg-black/50 dark:bg-black/60"
                 onClick={onClose}
                 aria-hidden="true"
             />
 
-            {/* Modal */}
             <div
                 ref={panelRef}
                 role="dialog"
@@ -48,7 +46,6 @@ const Modal = ({
                 animate-scale-in overflow-hidden
                 max-h-[calc(100vh-2rem)] overflow-y-auto outline-none
             `}>
-                {/* Header */}
                 {(title || showClose) && (
                     <div className="flex items-start justify-between p-5 pb-0">
                         <div>
@@ -71,7 +68,6 @@ const Modal = ({
                     </div>
                 )}
 
-                {/* Content */}
                 <div className="p-5">
                     {children}
                 </div>

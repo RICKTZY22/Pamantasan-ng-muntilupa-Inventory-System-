@@ -155,10 +155,9 @@ const Login = () => {
     return (
         <div className="min-h-screen overflow-y-auto bg-gray-50 dark:bg-gray-900 scroll-smooth">
 
-            {/* ═══════════ SECTION 1: HERO — Login ═══════════ */}
+            {/* Hero and login form */}
             <section className="min-h-screen flex relative">
 
-                {/* ── LEFT PANEL ── */}
                 <div className="hidden lg:flex lg:w-[55%] relative overflow-hidden">
                     <div
                         className="absolute inset-0 bg-cover bg-center scale-105 hover:scale-100 transition-transform duration-[20s]"
@@ -208,7 +207,6 @@ const Login = () => {
                     </div>
                 </div>
 
-                {/* ── RIGHT PANEL — form ── */}
                 <div className="flex-1 flex items-center justify-center relative bg-gray-50 dark:bg-gray-900 px-4 sm:px-6 py-8 sm:py-12">
                     <div className="absolute inset-0 bg-cover bg-center lg:hidden" style={{ backgroundImage: `url(${universityBuilding})` }} />
                     <div className="absolute inset-0 bg-gray-900/80 lg:hidden" />
@@ -362,7 +360,6 @@ const Login = () => {
                     </div>
                 </div>
 
-                {/* Scroll indicator */}
                 <button
                     onClick={() => document.getElementById('about-section')?.scrollIntoView({ behavior: 'smooth' })}
                     className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-1 text-white/60 hover:text-white/90 transition-colors cursor-pointer group"
@@ -374,9 +371,7 @@ const Login = () => {
             </section>
 
 
-            {/* ═══════════ SECTIONS 2-4 WRAPPER WITH CAROUSEL BACKGROUND ═══════════ */}
             <div className="relative overflow-hidden">
-                {/* Carousel background images */}
                 {BG_CAROUSEL_IMAGES.map((img, i) => (
                     <div
                         key={i}
@@ -388,10 +383,8 @@ const Login = () => {
                         }}
                     />
                 ))}
-                {/* Dark overlay for readability */}
                 <div className="absolute inset-0 bg-gray-900/80 dark:bg-gray-900/90 z-[1]" />
 
-                {/* Carousel dots indicator */}
                 <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[3] flex items-center gap-2">
                     {BG_CAROUSEL_IMAGES.map((_, i) => (
                         <button
@@ -406,7 +399,7 @@ const Login = () => {
                     ))}
                 </div>
 
-                {/* ═══════════ SECTION 2: ABOUT THE INVENTORY ═══════════ */}
+                {/* Inventory overview */}
                 <section
                     id="about-section"
                     ref={addSectionRef(0)}
@@ -463,7 +456,7 @@ const Login = () => {
                 </section>
 
 
-                {/* ═══════════ SECTION 3: WORK IN PROGRESS ═══════════ */}
+                {/* Roadmap preview */}
                 <section
                     ref={addSectionRef(1)}
                     data-section="philosophy"
@@ -481,18 +474,16 @@ const Login = () => {
                 </section>
 
 
-                {/* ═══════════ SECTION 4: ABOUT PLMUN + ACCREDITATION ═══════════ */}
+                {/* Campus and accreditation */}
                 <section
                     ref={addSectionRef(2)}
                     data-section="school"
                     className={`relative z-[2] py-12 md:py-20 px-4 sm:px-6 transition-all duration-700 ${visibleSections.has('school') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}
                 >
-                    {/* Section divider */}
                     <div className="absolute inset-0 bg-black/20 z-0" />
                     <div className="relative z-[1] max-w-6xl mx-auto">
                         <div className="grid lg:grid-cols-2 gap-6 sm:gap-12 items-center">
 
-                            {/* Campus image — shows current carousel image */}
                             <div className="relative rounded-2xl overflow-hidden shadow-2xl group">
                                 <img
                                     src={BG_CAROUSEL_IMAGES[bgIndex]}
@@ -513,7 +504,6 @@ const Login = () => {
                                 </div>
                             </div>
 
-                            {/* Info */}
                             <div className="space-y-6">
                                 <div>
                                     <span className="inline-block px-4 py-1.5 rounded-full bg-accent/20 text-accent-light text-xs font-bold uppercase tracking-widest mb-4 border border-accent/30">
@@ -551,7 +541,6 @@ const Login = () => {
                             </div>
                         </div>
 
-                        {/* ── Accreditation ── */}
                         <div className="mt-10 sm:mt-16">
                             <div className="text-center mb-10">
                                 <span className="inline-block px-4 py-1.5 rounded-full bg-accent/20 text-accent-light text-xs font-bold uppercase tracking-widest mb-3 border border-accent/30">
@@ -589,12 +578,11 @@ const Login = () => {
                     </div>
                 </section>
 
-            </div>{/* end carousel wrapper */}
+            </div>
 
 
-            {/* ═══════════ FOOTER — PLMun style ═══════════ */}
+            {/* Footer */}
             <footer className="relative overflow-hidden">
-                {/* Green gradient wave top */}
                 <div
                     className="h-24 w-full"
                     style={{
@@ -603,12 +591,10 @@ const Login = () => {
                     }}
                 />
 
-                {/* Main footer */}
                 <div className="bg-[#00553A] text-white px-4 sm:px-6 py-8 sm:py-12">
                     <div className="max-w-6xl mx-auto">
                         <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 sm:gap-10">
 
-                            {/* Logo + Contact */}
                             <div className="space-y-4 lg:col-span-1">
                                 <div className="flex items-center gap-3">
                                     <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center p-1.5 shadow-lg">
@@ -635,7 +621,6 @@ const Login = () => {
                                 </div>
                             </div>
 
-                            {/* Quick Links */}
                             <div>
                                 <h4 className="font-bold text-sm text-white mb-4 uppercase tracking-wider">Quick Links</h4>
                                 <ul className="space-y-2 text-sm text-white/70">
@@ -656,7 +641,6 @@ const Login = () => {
                                 </ul>
                             </div>
 
-                            {/* Other Links */}
                             <div>
                                 <h4 className="font-bold text-sm text-white mb-4 uppercase tracking-wider">Other Links</h4>
                                 <ul className="space-y-2 text-sm text-white/70">
@@ -676,7 +660,6 @@ const Login = () => {
                                 </ul>
                             </div>
 
-                            {/* Find Us On + Support */}
                             <div className="space-y-6">
                                 <div>
                                     <h4 className="font-bold text-sm text-white mb-4 uppercase tracking-wider">Find Us On</h4>
@@ -712,7 +695,6 @@ const Login = () => {
                     </div>
                 </div>
 
-                {/* Bottom bar */}
                 <div className="bg-[#004430] text-center py-4 px-6">
                     <p className="text-white/50 text-xs">
                         © {new Date().getFullYear()} Pamantasan ng Lungsod ng Muntinlupa · PLMun Inventory Nexus · All rights reserved.

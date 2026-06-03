@@ -1,28 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Timer, Warning as AlertTriangle } from '@phosphor-icons/react';
-
-/**
- * F-11: Due date countdown for active borrows.
- * Shows "Return in 2h 30m" with warning colors when close to deadline.
- */
-
-const formatDuration = (ms) => {
-    if (ms <= 0) return 'OVERDUE';
-    const totalMin = Math.floor(ms / 60000);
-    const days = Math.floor(totalMin / 1440);
-    const hours = Math.floor((totalMin % 1440) / 60);
-    const mins = totalMin % 60;
-
-    if (days > 0) return `${days}d ${hours}h`;
-    if (hours > 0) return `${hours}h ${mins}m`;
-    return `${mins}m`;
-};
+import { formatCompactDuration, MS_PER_HOUR } from '../../utils/timeUtils';
 
 const DueCountdown = ({ expectedReturn, className = '' }) => {
     const [now, setNow] = useState(Date.now());
 
     useEffect(() => {
-        const interval = setInterval(() => setNow(Date.now()), 60000); // update every minute
+        const interval = setInterval(() => setNow(Date.now()), 60000);
         return () => clearInterval(interval);
     }, []);
 
@@ -31,10 +15,10 @@ const DueCountdown = ({ expectedReturn, className = '' }) => {
     const dueTime = new Date(expectedReturn).getTime();
     const remaining = dueTime - now;
     const isOverdue = remaining <= 0;
-    const isUrgent = remaining > 0 && remaining < 3600000; // < 1 hour
-    const isWarning = remaining > 0 && remaining < 14400000; // < 4 hours
+    const isUrgent = remaining > 0 && remaining < MS_PER_HOUR;
+    const isWarning = remaining > 0 && remaining < 4 * MS_PER_HOUR;
 
-    const label = isOverdue ? 'OVERDUE' : `Return in ${formatDuration(remaining)}`;
+    const label = isOverdue ? 'OVERDUE' : `Return in ${formatCompactDuration(remaining)}`;
     const Icon = isOverdue || isUrgent ? AlertTriangle : Timer;
 
     const colorClass = isOverdue

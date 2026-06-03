@@ -8,12 +8,11 @@ from django.utils.html import strip_tags
 from .models import Item
 from .serializers import ItemSerializer, ItemCreateUpdateSerializer
 from apps.authentication.models import User, AuditLog, log_action
-from apps.permissions import IsStaffOrAbove, IsAdmin
+from apps.permissions import IsStaffOrAbove
 
 
 class ItemViewSet(viewsets.ModelViewSet):
-    """ViewSet para sa inventory items."""
-    # TODO: lagyan ng pagination 'to, mabagal kapag maraming items
+    """Inventory item endpoints."""
 
     queryset = Item.objects.all()
 
@@ -69,11 +68,11 @@ class ItemViewSet(viewsets.ModelViewSet):
         return response
 
     def get_queryset(self):
-        """I-filter yung items base sa role ng user at query params."""
+        """Filter inventory by role and query parameters."""
         queryset = Item.objects.select_related('status_changed_by').all()
         user = self.request.user
 
-        # i-check yung role hierarchy para malaman kung anong items yung allowed tignan ng user
+        # Users can only see items at or below their role level.
         role_hierarchy = User.ROLE_HIERARCHY
         user_level = role_hierarchy.get(user.role, 0)
 
@@ -83,7 +82,7 @@ class ItemViewSet(viewsets.ModelViewSet):
         ]
         queryset = queryset.filter(access_level__in=accessible_levels)
 
-        # huwag ipakita yung retired items sa students at faculty, wala naman silang magagawa dyan
+        # Students and faculty should not see retired stock in normal browsing.
         if user.role in ['STUDENT', 'FACULTY']:
             queryset = queryset.exclude(status='RETIRED')
 
@@ -109,7 +108,7 @@ class ItemViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def change_status(self, request, pk=None):
-        """Palitan yung status ng item (Available, Maintenance, Retired, etc)."""
+        """Change an item's status."""
         item = self.get_object()
         new_status = request.data.get('status')
         note = request.data.get('note', '')
@@ -156,7 +155,7 @@ class ItemViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def low_stock(self, request):
-        """Kunin yung mga items na mababa na yung stock."""
+        """Get items that are low on stock."""
         items = self.get_queryset().filter(
             quantity__lte=Item.get_low_stock_threshold(),
             quantity__gt=0,
@@ -172,11 +171,11 @@ class ItemViewSet(viewsets.ModelViewSet):
         serializer = ItemSerializer(items, many=True)
         return Response(serializer.data)
 
-    @action(detail=False, methods=['get'])
-    def stats(self, request):
-        """Get inventory statistics (one aggregate query, not seven)."""
+    @staticmethod
+    def _inventory_stats(queryset):
+        # Shared by /stats/ and /dashboard/ so the counts stay identical.
         threshold = Item.get_low_stock_threshold()
-        stats = self.get_queryset().aggregate(
+        return queryset.aggregate(
             total=Count('id'),
             available=Count('id', filter=Q(status='AVAILABLE')),
             inUse=Count('id', filter=Q(status='IN_USE')),
@@ -185,42 +184,34 @@ class ItemViewSet(viewsets.ModelViewSet):
             lowStock=Count('id', filter=Q(quantity__lte=threshold, quantity__gt=0)),
             outOfStock=Count('id', filter=Q(quantity=0)),
         )
-        return Response(stats)
+
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        """Get inventory statistics."""
+        return Response(self._inventory_stats(self.get_queryset()))
 
     @action(detail=False, methods=['get'])
     def dashboard(self, request):
-        """Combined dashboard endpoint — returns inventory stats, request stats,
-        low stock items, and category breakdown in a single call.
-        Replaces 4 separate API calls from the frontend (F10)."""
+        """Get inventory, request, low-stock, and category dashboard data."""
         from apps.requests.models import Request
         from apps.requests.overdue import OUTSTANDING_STATUSES
 
         inv_qs = self.get_queryset()
         threshold = Item.get_low_stock_threshold()
 
-        # Inventory stats — single aggregate query.
-        inventory_stats = inv_qs.aggregate(
-            total=Count('id'),
-            available=Count('id', filter=Q(status='AVAILABLE')),
-            inUse=Count('id', filter=Q(status='IN_USE')),
-            maintenance=Count('id', filter=Q(status='MAINTENANCE')),
-            retired=Count('id', filter=Q(status='RETIRED')),
-            lowStock=Count('id', filter=Q(quantity__lte=threshold, quantity__gt=0)),
-            outOfStock=Count('id', filter=Q(quantity=0)),
-        )
+        # Inventory summary and low-stock list use the same role-scoped queryset.
+        inventory_stats = self._inventory_stats(inv_qs)
 
-        # Low stock items (serialized)
         low_stock_items = inv_qs.filter(
             quantity__lte=threshold, quantity__gt=0,
         ).exclude(status='RETIRED').order_by('quantity')
         low_stock_data = ItemSerializer(low_stock_items, many=True).data
 
-        # Category breakdown
         category_counts = dict(
             inv_qs.values_list('category').annotate(count=Count('id')).values_list('category', 'count')
         )
 
-        # Request stats (scoped by role) — single aggregate query.
+        # Staff see all requests; borrowers only see their own dashboard counts.
         now = timezone.now()
         if request.user.role in ['STAFF', 'ADMIN']:
             req_qs = Request.objects.all()

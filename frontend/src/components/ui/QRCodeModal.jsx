@@ -96,15 +96,12 @@ const QRCodeModal = ({ isOpen, onClose, item }) => {
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-            {/* Backdrop */}
             <div
                 className="absolute inset-0 bg-black/50 backdrop-blur-sm"
                 onClick={onClose}
             />
 
-            {/* Modal */}
             <div className="relative bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4 animate-in zoom-in-95 duration-200">
-                {/* Close Button */}
                 <button
                     onClick={onClose}
                     className="absolute top-4 right-4 p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
@@ -112,7 +109,6 @@ const QRCodeModal = ({ isOpen, onClose, item }) => {
                     <X size={20} className="text-gray-500" />
                 </button>
 
-                {/* Header */}
                 <div className="flex items-center gap-3 mb-4">
                     <div className="p-2 bg-primary/10 rounded-lg">
                         <QrCode className="text-primary" size={24} />
@@ -123,13 +119,11 @@ const QRCodeModal = ({ isOpen, onClose, item }) => {
                     </div>
                 </div>
 
-                {/* Item Info */}
                 <div className="text-center mb-4 p-3 bg-gray-50 dark:bg-gray-700 rounded-xl">
                     <h4 className="font-semibold text-gray-800 dark:text-white truncate">{item.name}</h4>
                     <p className="text-sm text-gray-500 dark:text-gray-400">{item.category} • {item.location}</p>
                 </div>
 
-                {/* QR Code */}
                 <div
                     ref={qrRef}
                     className="flex justify-center p-6 bg-white rounded-xl border border-gray-200"
@@ -144,12 +138,10 @@ const QRCodeModal = ({ isOpen, onClose, item }) => {
                     />
                 </div>
 
-                {/* ID Badge */}
                 <p className="text-center text-xs text-gray-400 mt-3">
                     Item ID: <span className="font-mono">{item.id}</span>
                 </p>
 
-                {/* Action Buttons */}
                 <div className="flex gap-3 mt-6">
                     <button
                         onClick={handleDownload}

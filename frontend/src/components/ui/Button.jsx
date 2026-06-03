@@ -1,8 +1,5 @@
 import React from 'react';
 
-// mga variant at sizes ng button
-// HACK: yung gradient variant parang off ang colors sa dark mode, ayusin mamaya
-
 const variants = {
     primary: 'bg-accent text-white hover:bg-accent-dark shadow-sm hover:shadow-md',
     secondary: 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600',

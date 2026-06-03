@@ -36,7 +36,7 @@ const useMaintenanceWindow = (userRole = ROLES.STUDENT) => {
                     endTime: isActive ? data.endTime : 0,
                 });
             } catch {
-                // Kapag unreachable ang API, wag biglang i-lock ang UI; keep last known state.
+                // Keep the last known state if the API is temporarily unreachable.
             }
         };
 

@@ -6,8 +6,6 @@ import { setAccessToken } from '../services/api';
 import { formatApiError } from '../utils/errorUtils';
 import useUIStore from './uiStore';
 
-// 30 min idle timeout - requirement ng IT admin ng school
-// para sa mga shared computers sa lab na nakakalimutan mag-logout ng mga students
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 let idleTimer = null;
 let idleStartedAt = 0;   // timestamp when timer started
@@ -71,8 +69,6 @@ const detachIdleListeners = (handler) => {
     }
 };
 
-// normalize yung user data galing sa API
-// kasi minsan camelCase minsan snake_case yung backend, depende sa endpoint
 const mapUserResponse = (user) => ({
     id: user.id,
     email: user.email,
@@ -271,8 +267,6 @@ const useAuthStore = create(
 
             _idleHandler: null,
 
-            // background profile refresh para makita agad pag na-flag or na-deactivate
-            // tine-trigger 'to every 30s from DashboardLayout
             refreshProfile: async () => {
                 try {
                     const profile = await authService.getProfile();

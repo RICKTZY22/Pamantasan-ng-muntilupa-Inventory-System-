@@ -14,6 +14,7 @@ import { Button, Card } from '../components/ui';
 import { BarChartComponent, LineChartComponent, PieChartComponent } from '../components/dashboard';
 import { StaffOnly } from '../components/auth';
 import { useInventory, useRequests } from '../hooks';
+import { getOverdueAge } from '../utils/timeUtils';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 // html2canvas removed — PDF uses data tables instead of chart screenshots
@@ -303,8 +304,7 @@ const Reports = () => {
         return requests
             .filter(r => r.isOverdue && r.expectedReturn)
             .map(r => {
-                const returnDate = new Date(r.expectedReturn);
-                const daysOverdue = Math.max(0, Math.floor((now - returnDate) / (1000 * 60 * 60 * 24)));
+                const { daysOverdue } = getOverdueAge(r.expectedReturn, now);
                 return { ...r, daysOverdue };
             })
             .sort((a, b) => b.daysOverdue - a.daysOverdue);

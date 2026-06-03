@@ -2,7 +2,11 @@ import { useState, useCallback } from 'react';
 import { requestService } from '../services';
 import { formatApiError } from '../utils/errorUtils';
 
-// stats calculator - ino-update 'to every time may action sa request
+// Avoid running the overdue scan on every page mount.
+const OVERDUE_SCAN_COOLDOWN_MS = 10 * 60 * 1000;
+let lastOverdueScanAt = 0;
+
+// Basic counters for loaded request rows.
 const buildStats = (items) => {
     const init = { total: 0, pending: 0, approved: 0, rejected: 0, completed: 0, returned: 0, overdue: 0 };
     return items.reduce((acc, r) => {
@@ -23,17 +27,9 @@ const useRequests = () => {
     const [error, setError] = useState(null);
     const [selectedRequest, setSelectedRequest] = useState(null);
     const [stats, setStats] = useState(buildStats([]));
+    const [totalCount, setTotalCount] = useState(0);
 
     const clearError = useCallback(() => setError(null), []);
-
-    // i-fetch lahat ng requests at i-recalculate yung stats
-    const refreshAll = useCallback(async () => {
-        const data = await requestService.getAll();
-        const items = Array.isArray(data) ? data : data.results || [];
-        setRequests(items);
-        setStats(buildStats(items));
-        return items;
-    }, []);
 
     const fetchRequests = useCallback(async (filters = {}) => {
         setLoading(true);
@@ -50,16 +46,40 @@ const useRequests = () => {
         }
     }, []);
 
+    // Fetch one server-paginated page for the Requests page.
+    const fetchPage = useCallback(async (filters = {}) => {
+        setLoading(true);
+        setError(null);
+        try {
+            const data = await requestService.listPage(filters);
+            if (Array.isArray(data)) {
+                setRequests(data);
+                setTotalCount(data.length);
+            } else {
+                setRequests(data.results || []);
+                setTotalCount(typeof data.count === 'number' ? data.count : (data.results || []).length);
+            }
+        } catch (err) {
+            setError(err.response?.data?.detail || 'Failed to fetch requests');
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
     const fetchStats = useCallback(async () => {
         try {
             const data = await requestService.getStats();
             setStats(data);
         } catch (err) {
-            // stats fetch failed — non-critical
+            // Stats are helpful, but not required for the page to work.
         }
     }, []);
 
     const checkOverdue = useCallback(async () => {
+        // Skip if a scan ran recently.
+        const now = Date.now();
+        if (now - lastOverdueScanAt < OVERDUE_SCAN_COOLDOWN_MS) return null;
+        lastOverdueScanAt = now;
         try {
             return await requestService.checkOverdue();
         } catch (err) {
@@ -83,14 +103,12 @@ const useRequests = () => {
         }
     }, []);
 
-    // generic action handler para di paulit-ulit yung try/catch sa bawat action
-    // HACK: medyo malabo 'tong pattern na 'to pero gumagana naman
     const handleAction = useCallback(async (action, successMsg, failMsg) => {
         setLoading(true);
         setError(null);
         try {
             await action();
-            await refreshAll();
+            // Requests page reloads the current server page after actions.
             return { success: true, message: successMsg };
         } catch (err) {
             const errorMessage = err.response?.data?.detail || err.response?.data?.error || failMsg;
@@ -99,7 +117,7 @@ const useRequests = () => {
         } finally {
             setLoading(false);
         }
-    }, [refreshAll]);
+    }, []);
 
     const approveRequest = useCallback((id) =>
         handleAction(() => requestService.approve(id), 'Request approved successfully', 'Failed to approve request'),
@@ -144,6 +162,8 @@ const useRequests = () => {
         selectedRequest,
         setSelectedRequest,
         fetchRequests,
+        fetchPage,
+        totalCount,
         fetchStats,
         createRequest,
         approveRequest,

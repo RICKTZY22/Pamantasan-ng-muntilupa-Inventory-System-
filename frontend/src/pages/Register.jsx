@@ -6,8 +6,6 @@ import { AnimatedInput } from '../components/ui';
 import universityBuilding from '../assets/images/university-building.jpg';
 import plmunLogo from '../assets/images/logo.png';
 
-// password strength checker
-// TODO: baka need pa 'tong i-improve, parang ang dali maka-"Strong" rating
 const getPasswordStrength = (password) => {
     if (!password) return { score: 0, label: '', color: '', textColor: '' };
     let score = 0;
@@ -62,7 +60,6 @@ const Register = () => {
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
     const [validationError, setValidationError] = useState('');
 
-    // entrance animation
     useEffect(() => { setMounted(true); }, []);
 
     const handleChange = (field) => (e) => {
@@ -111,7 +108,6 @@ const Register = () => {
 
     return (
         <div className="min-h-screen flex overflow-hidden">
-            {/* ===== LEFT PANEL — Branding ===== */}
             <div className="hidden lg:flex lg:w-[45%] relative overflow-hidden">
                 <div
                     className="absolute inset-0 bg-cover bg-center scale-105 transition-transform duration-[20s] hover:scale-100"
@@ -119,12 +115,10 @@ const Register = () => {
                 />
                 <div className="absolute inset-0 bg-gradient-to-br from-gray-900/85 via-accent/25 to-gray-900/75" />
 
-                {/* Animated orbs */}
                 <div className="absolute top-20 right-12 w-40 h-40 bg-accent/15 rounded-full blur-3xl animate-float" />
                 <div className="absolute bottom-40 left-8 w-56 h-56 bg-accent-light/10 rounded-full blur-3xl animate-float-reverse" />
                 <div className="absolute top-1/2 left-1/3 w-24 h-24 bg-white/5 rounded-full blur-2xl animate-float-slow" />
 
-                {/* Decorative grid */}
                 <div className="absolute inset-0 opacity-[0.04]"
                     style={{ backgroundImage: 'linear-gradient(rgba(255,255,255,1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,1) 1px, transparent 1px)', backgroundSize: '48px 48px' }} />
 
@@ -163,9 +157,7 @@ const Register = () => {
                 </div>
             </div>
 
-            {/* ===== RIGHT PANEL — Register Form ===== */}
             <div className="flex-1 flex items-center justify-center relative bg-gray-50 dark:bg-gray-900 px-6 py-10">
-                {/* Mobile bg */}
                 <div
                     className="absolute inset-0 bg-cover bg-center lg:hidden"
                     style={{ backgroundImage: `url(${universityBuilding})` }}
@@ -176,14 +168,12 @@ const Register = () => {
                     className={`relative z-10 w-full max-w-md transition-all duration-700 ${mounted ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-8'}`}
                     style={{ transitionDelay: '150ms' }}
                 >
-                    {/* Mobile logo */}
                     <div className={`flex justify-center mb-6 lg:hidden transition-all duration-500 ${mounted ? 'opacity-100 scale-100' : 'opacity-0 scale-75'}`}>
                         <div className="w-16 h-16 bg-white rounded-2xl shadow-xl flex items-center justify-center p-2 animate-logo-pop">
                             <img src={plmunLogo} alt="PLMun Logo" className="w-full h-full object-contain" />
                         </div>
                     </div>
 
-                    {/* Card */}
                     <div
                         className={`bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8 border border-gray-200 dark:border-gray-700 transition-all duration-700 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}
                         style={{ transitionDelay: '250ms' }}
@@ -196,7 +186,6 @@ const Register = () => {
                             <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">Fill in the details below to get started</p>
                         </div>
 
-                        {/* Errors */}
                         {(error || validationError) && (
                             <div className="mb-5 p-3 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-800 animate-slide-in">
                                 <p className="text-sm text-red-600 dark:text-red-400 flex items-center gap-2">
@@ -207,25 +196,21 @@ const Register = () => {
                         )}
 
                         <form onSubmit={handleSubmit} className="space-y-4" autoComplete="off">
-                            {/* Full Name */}
                             <div className={`transition-all duration-500 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`} style={{ transitionDelay: '400ms' }}>
                                 <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5 ml-0.5">Full Name</label>
                                 <AnimatedInput icon={User} type="text" placeholder="Juan Dela Cruz" value={formData.fullName} onChange={handleChange('fullName')} autoComplete="name" />
                             </div>
 
-                            {/* Email */}
                             <div className={`transition-all duration-500 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`} style={{ transitionDelay: '450ms' }}>
                                 <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5 ml-0.5">Email Address</label>
                                 <AnimatedInput icon={Mail} type="email" placeholder="your@plmun.edu.ph" value={formData.email} onChange={handleChange('email')} autoComplete="email" />
                             </div>
 
-                            {/* Department */}
                             <div className={`transition-all duration-500 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`} style={{ transitionDelay: '500ms' }}>
                                 <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5 ml-0.5">Department</label>
                                 <AnimatedInput icon={Users} type="text" placeholder="e.g. CCS, CBA" value={formData.department} onChange={handleChange('department')} autoComplete="organization" />
                             </div>
 
-                            {/* Student ID — only for students */}
                             {formData.role === 'STUDENT' && (
                                 <div className={`transition-all duration-500 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`} style={{ transitionDelay: '520ms' }}>
                                     <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5 ml-0.5">Student ID Number</label>
@@ -234,7 +219,6 @@ const Register = () => {
                                 </div>
                             )}
 
-                            {/* Password */}
                             <div className={`transition-all duration-500 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`} style={{ transitionDelay: '550ms' }}>
                                 <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5 ml-0.5">Password</label>
                                 <AnimatedInput
@@ -254,7 +238,6 @@ const Register = () => {
                                 <PasswordStrengthBar password={formData.password} />
                             </div>
 
-                            {/* Confirm Password */}
                             <div className={`transition-all duration-500 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`} style={{ transitionDelay: '620ms' }}>
                                 <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5 ml-0.5">Confirm Password</label>
                                 <div className="relative">
@@ -292,7 +275,6 @@ const Register = () => {
                                 </div>
                             </div>
 
-                            {/* Submit */}
                             <div className={`pt-2 transition-all duration-500 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`} style={{ transitionDelay: '700ms' }}>
                                 <button
                                     type="submit"

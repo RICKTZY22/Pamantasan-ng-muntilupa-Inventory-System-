@@ -12,6 +12,19 @@ const requestService = {
         return fetchAllPages(`/requests/?${params.toString()}`);
     },
 
+    // One server-paginated page for the Requests screen.
+    listPage: async ({ page = 1, status = '', overdue = false, mine = false, search = '', include_cleared = false } = {}) => {
+        const params = new URLSearchParams();
+        params.append('page', String(page));
+        if (status) params.append('status', status);
+        if (overdue) params.append('overdue', 'true');
+        if (mine) params.append('mine', 'true');
+        if (search) params.append('search', search);
+        if (include_cleared) params.append('include_cleared', 'true');
+        const response = await api.get(`/requests/?${params.toString()}`);
+        return response.data;
+    },
+
 
     create: async (request) => {
         const response = await api.post('/requests/', request);

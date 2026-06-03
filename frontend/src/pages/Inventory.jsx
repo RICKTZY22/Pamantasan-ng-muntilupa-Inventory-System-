@@ -90,7 +90,6 @@ const Inventory = () => {
         }
     }, [inventory, searchParams, setSearchParams]);
 
-    // favorites system - naka-save sa localStorage per user
     const [favorites, setFavorites] = useState([]);
     useEffect(() => {
         if (!user?.id) return;
@@ -113,7 +112,6 @@ const Inventory = () => {
     const [statusNote, setStatusNote] = useState('');
     const [maintenanceEta, setMaintenanceEta] = useState('');
 
-    // pag-filter ng items na naka-memo para hindi mag re-render nang paulit-ulit
     const filteredItems = useMemo(() => {
         if (!inventory) return [];
         return inventory.filter(item => {
@@ -221,8 +219,6 @@ const Inventory = () => {
         setDeleteItemId(null);
     };
 
-    // status change helpers
-    // FIXME: medyo magulo 'tong state management, refactor pag may time
     const openStatusModal = (item, targetStatus, e) => {
         e?.stopPropagation();
         setStatusModal({ open: true, item, targetStatus });
@@ -386,6 +382,7 @@ const Inventory = () => {
     return (
         <>
             <div className="space-y-4">
+                {/* Inventory workspace */}
                 <section className="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900/80 overflow-hidden">
                     <div className="flex flex-col gap-3 border-b border-gray-200 px-4 py-3 dark:border-gray-800 lg:flex-row lg:items-center lg:justify-between">
                         <div className="min-w-0">
@@ -436,6 +433,7 @@ const Inventory = () => {
 
                     <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_260px]">
                         <div className="min-w-0">
+                            {/* Search and filters */}
                             <div className="flex flex-col gap-2 border-b border-gray-200 px-4 py-3 dark:border-gray-800 xl:flex-row xl:items-center">
                                 <div className="relative min-w-0 flex-1">
                                     <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -472,6 +470,7 @@ const Inventory = () => {
                                 </div>
                             </div>
 
+                            {/* Item table or card grid */}
                             {loading ? (
                                 <div className="flex min-h-[420px] items-center justify-center">
                                     <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
@@ -632,6 +631,7 @@ const Inventory = () => {
                             )}
                         </div>
 
+                        {/* Inventory side summary */}
                         <aside className="border-t border-gray-200 bg-gray-50/70 p-4 dark:border-gray-800 dark:bg-gray-950/30 lg:border-l lg:border-t-0">
                             <div className="space-y-5">
                                 <div>
@@ -720,7 +720,7 @@ const Inventory = () => {
                     </div>
                 </section>
 
-                {/* Add/Edit Modal - extracted to InventoryFormModal */}
+                {/* Add/edit item modal */}
                 <InventoryFormModal
                     isOpen={isAddModalOpen}
                     onClose={() => {
@@ -734,7 +734,7 @@ const Inventory = () => {
                     setFormData={setFormData}
                 />
 
-                {/* QR Code Modal */}
+                {/* QR code modal */}
                 <QRCodeModal
                     isOpen={qrModalOpen}
                     onClose={() => {
@@ -744,7 +744,7 @@ const Inventory = () => {
                     item={qrItem}
                 />
 
-                {/* Delete Confirmation Modal */}
+                {/* Delete confirmation modal */}
                 <Modal
                     isOpen={deleteModalOpen}
                     onClose={() => {
@@ -778,7 +778,7 @@ const Inventory = () => {
                     </div>
                 </Modal>
 
-                {/* Item Detail - extracted to InventoryDetailModal */}
+                {/* Item detail modal */}
                 <InventoryDetailModal
                     item={detailItem}
                     isOpen={!!detailItem}
@@ -787,7 +787,7 @@ const Inventory = () => {
                     getStatusActions={getStatusActions}
                 />
 
-                {/* ===== Status Change Modal ===== */}
+                {/* Status change modal */}
                 <Modal
                     isOpen={statusModal.open}
                     onClose={() => setStatusModal({ open: false, item: null, targetStatus: '' })}
@@ -795,7 +795,6 @@ const Inventory = () => {
                     size="sm"
                 >
                     <div className="space-y-4 pt-2">
-                        {/* Status badge preview */}
                         <div className="flex items-center gap-2 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
                             <span className="text-sm text-gray-600 dark:text-gray-300">Item:</span>
                             <span className="font-semibold text-sm text-gray-900 dark:text-white">{statusModal.item?.name}</span>
@@ -805,7 +804,6 @@ const Inventory = () => {
                             </span>
                         </div>
 
-                        {/* Reason / Note */}
                         <div>
                             <label className="block text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1">
                                 Reason / Note <span className="text-gray-400">(optional)</span>
@@ -819,7 +817,6 @@ const Inventory = () => {
                             />
                         </div>
 
-                        {/* Maintenance ETA date picker */}
                         {statusModal.targetStatus === 'MAINTENANCE' && (
                             <div>
                                 <label className="block text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1">
@@ -835,7 +832,6 @@ const Inventory = () => {
                             </div>
                         )}
 
-                        {/* Action buttons */}
                         <div className="flex gap-3 pt-2">
                             <Button
                                 type="button"

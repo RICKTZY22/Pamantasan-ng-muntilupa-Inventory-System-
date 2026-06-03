@@ -4,10 +4,7 @@ from datetime import timedelta
 
 
 class Item(models.Model):
-    """Isa-isang item sa inventory.
-    Dati walang access_level, pero hiningi ng registrar kasi may mga
-    gamit na para sa faculty lang talaga (e.g. projectors sa faculty room).
-    """
+    """Inventory item with role-scoped access and borrow/return metadata."""
 
     class Status(models.TextChoices):
         AVAILABLE = 'AVAILABLE', 'Available'
@@ -64,8 +61,6 @@ class Item(models.Model):
         default=Priority.MEDIUM,
         help_text='Item importance: LOW (consumables), MEDIUM (standard), HIGH (fragile/expensive)',
     )
-    # TODO: mag-add ng 'condition' field para ma-track kung sira na or what
-
     # Status metadata
     status_note = models.TextField(blank=True, default='', help_text='Reason or note for current status')
     status_changed_at = models.DateTimeField(null=True, blank=True, help_text='When the status was last changed')

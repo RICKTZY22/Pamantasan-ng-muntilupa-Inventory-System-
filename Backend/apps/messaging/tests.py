@@ -1,4 +1,5 @@
 from unittest.mock import patch
+import time
 
 from asgiref.sync import async_to_sync
 from django.contrib.auth import get_user_model
@@ -284,6 +285,25 @@ class ConversationLifecycleTests(APITestCase):
         self.assertEqual(restarted.data['lastMessage'], None)
         self.assertEqual(messages.data['results'], [])
         self.assertIsNone(ConversationMember.objects.get(conversation=conv, user=self.student).deleted_at)
+
+    @patch('apps.messaging.views._create_and_broadcast_auto_reply')
+    def test_rest_message_send_does_not_wait_for_auto_reply(self, mock_worker):
+        def slow_worker(*_args, **_kwargs):
+            time.sleep(0.5)
+
+        mock_worker.side_effect = slow_worker
+        conv, _created = services.get_or_create_direct_conversation(self.student, self.staff)
+
+        started = time.perf_counter()
+        response = self.client.post(
+            f'/api/messaging/conversations/{conv.id}/messages/',
+            {'body': 'Can anyone help?'},
+            format='json',
+        )
+        elapsed = time.perf_counter() - started
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertLess(elapsed, 0.3)
 
     @override_settings(GEMINI_API_KEY='test-key')
     @patch('apps.messaging.assistant.generate_reply', return_value='Thank you. Staff will follow up when available.')

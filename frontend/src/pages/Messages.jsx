@@ -14,19 +14,10 @@ import inventoryService from '../services/inventoryService';
 import { sendChat } from '../services/chatSocket';
 import { getRoleMeta } from '../components/users/roleMeta';
 import { resolveImageUrl } from '../utils/imageUtils';
+import { formatShortRelativeTime } from '../utils/timeUtils';
 
 const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
-const relTime = (ts) => {
-    if (!ts) return '';
-    const d = new Date(ts);
-    const diff = Date.now() - d.getTime();
-    if (diff < 60000) return 'now';
-    if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
-    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
-    if (diff < 604800000) return d.toLocaleDateString('en-US', { weekday: 'short' });
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-};
 const clockTime = (ts) => (ts ? new Date(ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '');
 
 const formatAssistantBody = (body = '') => body
@@ -336,9 +327,9 @@ const Messages = () => {
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Messages</h1>
 
             <div className="flex h-[calc(100vh-12rem)] min-h-[440px] rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800/40 overflow-hidden shadow-card">
-                {/* ── Conversation list ── */}
                 {showList && (
                     <aside className="flex flex-col w-full md:w-80 md:flex-shrink-0 border-r border-gray-100 dark:border-gray-700/60">
+                        {/* Conversation list */}
                         <div className="p-3 space-y-3 border-b border-gray-100 dark:border-gray-700/60">
                             <div className="flex items-center gap-2">
                                 <div className="flex-1 flex rounded-lg bg-gray-100 dark:bg-gray-800 p-0.5 text-sm">
@@ -401,7 +392,7 @@ const Messages = () => {
                                         <div className="min-w-0 flex-1">
                                             <div className="flex items-center justify-between gap-2">
                                                 <span className="text-sm font-semibold text-gray-900 dark:text-white truncate">{c.other?.name || 'Unknown'}</span>
-                                                <span className="text-[11px] text-gray-400 flex-shrink-0">{relTime(c.lastMessage?.createdAt || c.updatedAt)}</span>
+                                                <span className="text-[11px] text-gray-400 flex-shrink-0">{formatShortRelativeTime(c.lastMessage?.createdAt || c.updatedAt)}</span>
                                             </div>
                                             <div className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
                                                 {lastMine && <span className="text-gray-400">You:</span>}
@@ -416,9 +407,9 @@ const Messages = () => {
                     </aside>
                 )}
 
-                {/* ── Thread ── */}
                 {showThread && (
                     <section className="flex-1 flex flex-col min-w-0">
+                        {/* Active conversation */}
                         {!active ? (
                             <div className="flex-1 flex flex-col items-center justify-center text-center text-gray-400 dark:text-gray-500 px-6">
                                 <ChatCircle size={40} weight="duotone" className="mb-3" />
@@ -426,7 +417,6 @@ const Messages = () => {
                             </div>
                         ) : (
                             <>
-                                {/* header */}
                                 <div className="flex items-center gap-3 p-3 border-b border-gray-100 dark:border-gray-700/60">
                                     {isMobile && (
                                         <button type="button" onClick={() => setActive(null)} aria-label="Back" className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700/60"><ArrowLeft size={18} /></button>
@@ -452,7 +442,6 @@ const Messages = () => {
                                     </div>
                                 </div>
 
-                                {/* messages */}
                                 <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-1">
                                     {hasMore && (
                                         <div className="text-center pb-2">
@@ -472,11 +461,9 @@ const Messages = () => {
                                             <div key={m.id} className={`group flex items-end gap-2 ${mine ? 'justify-end' : 'justify-start'}`}>
                                                 <div className="w-7 flex-shrink-0">{showAvatar && <Avatar src={m.sender?.avatar} name={m.sender?.name} size={28} isAssistant={m.sender?.isAssistant} />}</div>
                                                 <div className={`max-w-[72%] flex flex-col relative ${mine ? 'items-end' : 'items-start'}`}>
-                                                    {/* click-away backdrop while this message's picker is open */}
                                                     {!activeIsAssistant && reactingId === m.id && (
                                                         <div className="fixed inset-0 z-20" onClick={() => setReactingId(null)} aria-hidden="true" />
                                                     )}
-                                                    {/* emoji picker — opened by the trigger button (desktop) or long-press (mobile) */}
                                                     {!activeIsAssistant && reactingId === m.id && (
                                                         <div className={`absolute -top-10 ${mine ? 'right-0' : 'left-0'} flex items-center gap-1 px-2 py-1.5 rounded-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-lg z-30`}>
                                                             {REACTIONS.map((em) => (
@@ -540,7 +527,7 @@ const Messages = () => {
                                     )}
                                 </div>
 
-                                {/* composer */}
+                                {/* Composer */}
                                 <div className="border-t border-gray-100 dark:border-gray-700/60">
                                     {activeIsAssistant && assistantError && (
                                         <div className="mx-3 mt-3 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-200 text-sm">
@@ -590,7 +577,7 @@ const Messages = () => {
                 )}
             </div>
 
-            {/* New message picker */}
+            {/* New message modal */}
             <Modal isOpen={newOpen} onClose={() => setNewOpen(false)} title="New message">
                 {referItem && (
                     <div className="mb-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-accent/10 text-accent text-sm">
@@ -615,7 +602,7 @@ const Messages = () => {
                 </div>
             </Modal>
 
-            {/* Refer an inventory item */}
+            {/* Inventory item picker */}
             <Modal isOpen={itemPickerOpen} onClose={() => setItemPickerOpen(false)} title="Refer an item">
                 <div className="space-y-3">
                     <Input icon={Search} placeholder="Search inventory…" value={itemSearch} onChange={(e) => setItemSearch(e.target.value)} />

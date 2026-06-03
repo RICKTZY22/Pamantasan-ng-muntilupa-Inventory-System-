@@ -34,7 +34,6 @@ const UserCard = ({ user, onChangeRole, onToggleStatus, onUnflag, onDelete }) =>
 
     return (
         <div className={`relative flex flex-col rounded-2xl border bg-white dark:bg-gray-800/50 shadow-card transition-shadow hover:shadow-card-hover ${user.isFlagged ? 'border-red-200 dark:border-red-800/40' : 'border-gray-200 dark:border-gray-700/60'} ${!active ? 'opacity-70' : ''}`}>
-            {/* Kebab menu */}
             <div className="absolute top-3 right-3" ref={menuRef}>
                 <button
                     type="button"
@@ -78,7 +77,6 @@ const UserCard = ({ user, onChangeRole, onToggleStatus, onUnflag, onDelete }) =>
                 )}
             </div>
 
-            {/* Identity */}
             <div className="flex flex-col items-center text-center px-5 pt-6 pb-4">
                 <div className="relative">
                     <Avatar src={avatar} name={name} size={64} gradient={meta.gradient} className="ring-2 ring-gray-100 dark:ring-gray-700" />
@@ -91,7 +89,6 @@ const UserCard = ({ user, onChangeRole, onToggleStatus, onUnflag, onDelete }) =>
                 </span>
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400 truncate max-w-full">{user.email}</p>
 
-                {/* Info chips */}
                 <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5">
                     {user.department && (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-gray-100 text-gray-600 dark:bg-gray-700/60 dark:text-gray-300">
@@ -111,7 +108,6 @@ const UserCard = ({ user, onChangeRole, onToggleStatus, onUnflag, onDelete }) =>
                 </div>
             </div>
 
-            {/* Email / Phone footer */}
             <div className="grid grid-cols-2 border-t border-gray-100 dark:border-gray-700/60 divide-x divide-gray-100 dark:divide-gray-700/60 mt-auto">
                 <a href={`mailto:${user.email}`} className="flex items-center justify-center gap-1.5 py-2.5 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors">
                     <Mail size={16} /> Email

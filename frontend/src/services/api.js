@@ -35,7 +35,6 @@ api.interceptors.request.use(
 let isRefreshing = false;
 let failedQueue = [];
 
-// mutex queue para sa sabay-sabay na 401 errors — iisang refresh lang.
 const processQueue = (error, token = null) => {
     failedQueue.forEach(prom => {
         if (error) prom.reject(error);

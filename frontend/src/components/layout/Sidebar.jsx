@@ -79,7 +79,6 @@ const Sidebar = ({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) => {
         setMobileOpen?.(false);
     }, [location.pathname, setMobileOpen]);
 
-    // Badge count lang kailangan dito, kaya stats endpoint ang gamitin.
     const fetchPendingCount = useCallback(async () => {
         try {
             const stats = await requestService.getStats();
@@ -108,7 +107,6 @@ const Sidebar = ({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) => {
 
     return (
         <>
-            {/* Mobile Overlay */}
             <AnimatePresence>
                 {trapActive && (
                     <MotionDiv
@@ -123,7 +121,6 @@ const Sidebar = ({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) => {
                 )}
             </AnimatePresence>
 
-            {/* Sidebar */}
             <MotionAside
                 ref={drawerRef}
                 id="mobile-sidebar"
@@ -139,7 +136,6 @@ const Sidebar = ({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) => {
                 flex flex-col
                 ${collapsed ? 'w-[68px]' : 'w-60'}
             `}>
-                {/* Logo Header */}
                 <div className="h-14 flex items-center justify-between px-3 border-b border-gray-100 dark:border-gray-800">
                     <div className="flex items-center gap-2.5 min-w-0">
                         <div className="w-9 h-9 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center flex-shrink-0 overflow-hidden">
@@ -172,11 +168,9 @@ const Sidebar = ({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) => {
                     </button>
                 </div>
 
-                {/* Navigation Groups */}
                 <nav className="flex-1 py-2 px-2 overflow-y-auto scrollbar-hide">
                     {navGroups.map((group, gi) => (
                         <div key={group.label} className={gi > 0 ? 'mt-4' : ''}>
-                            {/* Section Label */}
                             {!collapsed && (
                                 <span className="block px-3 mb-1 text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500">
                                     {group.label}
@@ -186,7 +180,6 @@ const Sidebar = ({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) => {
                                 <div className="mx-3 mb-2 border-t border-gray-100 dark:border-gray-800" />
                             )}
 
-                            {/* Nav Items */}
                             <div className="space-y-0.5">
                                 {group.items.map((item) => (
                                     <NavLink
@@ -210,7 +203,6 @@ const Sidebar = ({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) => {
                                                     <span className="text-[13px] truncate">{item.label}</span>
                                                 )}
 
-                                                {/* Count badge (pending requests / unread messages) */}
                                                 {badgeCountFor(item) > 0 && (
                                                     <span className={`
                                                         ${collapsed ? 'absolute -top-0.5 -right-0.5' : 'ml-auto'}
@@ -223,7 +215,6 @@ const Sidebar = ({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) => {
                                                     </span>
                                                 )}
 
-                                                {/* Collapsed tooltip */}
                                                 {collapsed && (
                                                     <div className="
                                                         absolute left-full ml-2 px-2.5 py-1.5
@@ -250,7 +241,6 @@ const Sidebar = ({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) => {
                     ))}
                 </nav>
 
-                {/* User Section — pinned at bottom */}
                 <div className="p-2 border-t border-gray-100 dark:border-gray-800 flex-shrink-0">
                     <div className={`flex items-center gap-2 p-2 rounded-lg ${collapsed ? 'justify-center' : ''}`}>
                         <Avatar src={user?.avatar} name={user?.fullName} size={32} />

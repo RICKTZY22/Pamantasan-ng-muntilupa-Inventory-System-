@@ -1,12 +1,12 @@
 from rest_framework import serializers
 from django.utils.html import strip_tags
 from typing import Optional
+from apps.common.images import validate_image_upload
 from .models import Item
 
 
 class ItemSerializer(serializers.ModelSerializer):
-    """Read serializer para sa items. CamelCase kasi gusto ng frontend."""
-    # medyo maraming fields 'to pero kailangan talaga lahat para sa detail view
+    """Read serializer with the camelCase fields expected by the frontend."""
 
     isLowStock = serializers.SerializerMethodField()
     isOutOfStock = serializers.SerializerMethodField()
@@ -48,7 +48,7 @@ class ItemSerializer(serializers.ModelSerializer):
 
 
 class ItemCreateUpdateSerializer(serializers.ModelSerializer):
-    """Write serializer - mas kaunti yung fields kasi di naman lahat editable."""
+    """Write serializer for editable item fields."""
 
     accessLevel = serializers.CharField(source='access_level', required=False)
     imageUrl = serializers.ImageField(source='image', required=False, allow_null=True)
@@ -69,8 +69,17 @@ class ItemCreateUpdateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError('Quantity cannot be negative.')
         return value
 
+    def validate_imageUrl(self, value):
+        """Run a freshly-uploaded item image through the shared allowlist
+        (size + MIME/ext + decoded format). None / unchanged images are left
+        alone — only actual uploads carry a `size` attribute."""
+        if value is not None and hasattr(value, 'size'):
+            error = validate_image_upload(value)
+            if error:
+                raise serializers.ValidationError(error)
+        return value
+
     def validate_name(self, value):
-        # strip_tags para di ma-inject ng <script> sa name haha
         return strip_tags(value).strip()
 
     def validate_brand(self, value):

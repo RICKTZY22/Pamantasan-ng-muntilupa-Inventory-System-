@@ -1,11 +1,4 @@
-"""
-Shared permission classes para sa buong system.
-Dati kasi naka-copy paste per app yung permission logic,
-kaya nag-create na lang ng isang file na import-an ng lahat.
-
-Usage:
-    from apps.permissions import IsStaffOrAbove, IsAdmin, IsFacultyOrAbove
-"""
+"""Shared role-based permission classes."""
 
 from rest_framework import permissions
 

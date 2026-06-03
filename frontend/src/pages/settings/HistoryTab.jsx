@@ -9,11 +9,14 @@ import { StatChip } from '../../components/dashboard';
 import { SettingsGroup, SettingCard } from '../../components/settings';
 import { StaffOnly } from '../../components/auth';
 import { requestService } from '../../services';
+import { isHistoryOverdue } from '../../utils/requestHistory';
+import { getOverdueAge } from '../../utils/timeUtils';
 
 const STATUS_COLORS = {
     PENDING: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
     APPROVED: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
     COMPLETED: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+    RETURN_PENDING: 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400',
     RETURNED: 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400',
     REJECTED: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
     CANCELLED: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400',
@@ -62,13 +65,13 @@ const HistoryTab = () => {
     const flaggedItems = useMemo(() => {
         const now = new Date();
         return allRequests
-            .filter(r => ['APPROVED', 'COMPLETED'].includes(r.status) && r.expectedReturn && new Date(r.expectedReturn) < now)
+            .filter(isHistoryOverdue)
             .map(r => {
-                const diffMs = now - new Date(r.expectedReturn);
+                const { daysOverdue, hoursOverdue } = getOverdueAge(r.expectedReturn, now);
                 return {
                     ...r,
-                    daysOverdue: Math.max(0, Math.floor(diffMs / 86400000)),
-                    hoursOverdue: Math.max(0, Math.floor(diffMs / 3600000)),
+                    daysOverdue,
+                    hoursOverdue,
                 };
             })
             .sort((a, b) => b.hoursOverdue - a.hoursOverdue);
@@ -135,7 +138,7 @@ const HistoryTab = () => {
     return (
         <StaffOnly showAccessDenied>
             <div className="space-y-6">
-                {/* Stats */}
+                {/* Summary cards */}
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                     <StatChip icon={FileText} value={stats.total} label="All requests" tone="blue" onClick={() => setStatusFilter('ALL')} />
                     <StatChip icon={CheckCircle} value={stats.completed} label="Completed / returned" tone="emerald" onClick={() => setStatusFilter('COMPLETED')} />
@@ -143,7 +146,7 @@ const HistoryTab = () => {
                     <StatChip icon={AlertTriangle} value={stats.flagged} label="Overdue items" tone={stats.flagged > 0 ? 'red' : 'gray'} />
                 </div>
 
-                {/* Flagged / overdue */}
+                {/* Overdue request list */}
                 <SettingsGroup title="Flagged accounts — overdue items" description="Borrowers with unreturned items past their expected return date">
                     <SettingCard
                         icon={AlertTriangle}
@@ -200,7 +203,7 @@ const HistoryTab = () => {
                     </SettingCard>
                 </SettingsGroup>
 
-                {/* Full history */}
+                {/* Full request history */}
                 <SettingsGroup title="Complete request history" description="All requests including cleared and archived records">
                     <div className="rounded-xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800/40 p-4 sm:p-5 space-y-4">
                         <div className="flex flex-col sm:flex-row sm:items-center gap-3">
@@ -212,6 +215,7 @@ const HistoryTab = () => {
                                 <option value="PENDING">Pending</option>
                                 <option value="APPROVED">Approved</option>
                                 <option value="COMPLETED">Completed</option>
+                                <option value="RETURN_PENDING">Return pending</option>
                                 <option value="RETURNED">Returned</option>
                                 <option value="REJECTED">Rejected</option>
                                 <option value="CANCELLED">Cancelled</option>
@@ -266,7 +270,7 @@ const HistoryTab = () => {
                     </div>
                 </SettingsGroup>
 
-                {/* Clear History Modal */}
+                {/* Clear history modal */}
                 <Modal isOpen={clearModalOpen} onClose={() => { setClearModalOpen(false); setClearCode(''); setClearError(''); }} title="Clear Request History">
                     <div className="space-y-4">
                         <div className="p-3 bg-red-50 dark:bg-red-900/20 rounded-xl border border-red-200 dark:border-red-800">

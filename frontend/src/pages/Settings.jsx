@@ -75,7 +75,6 @@ const Settings = () => {
         // reset the open tab on every navigation.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isMobile]);
-    // i-filter yung tabs based sa role
     const visibleTabs = settingsTabs.filter(tab => {
         if (tab.exactRole) return user?.role === tab.exactRole;
         if (!tab.minRole) return true;
@@ -233,8 +232,6 @@ const Settings = () => {
         }
     };
 
-    // audit logs - admin only
-    // TODO: lagyan ng search/filter yung audit logs kasi ang hirap maghanap pag madami na
     const [auditLogs, setAuditLogs] = useState([]);
     const [auditLogsLoading, setAuditLogsLoading] = useState(false);
     const [clearLogsConfirm, setClearLogsConfirm] = useState(false);
@@ -499,7 +496,6 @@ const Settings = () => {
             const TabIcon = currentTab?.icon || SettingsIcon;
             return (
                 <div className="animate-fade-in">
-                    {/* Back header */}
                     <button
                         onClick={() => setActiveTab(null)}
                         className="flex items-center gap-2 mb-4 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
@@ -516,7 +512,6 @@ const Settings = () => {
                             {currentTab?.desc && <p className="text-xs text-gray-500 dark:text-gray-400">{currentTab.desc}</p>}
                         </div>
                     </div>
-                    {/* Mobile toast notification */}
                     {renderToast('mb-4')}
                     <MotionDiv
                         key={activeTab}
@@ -557,7 +552,6 @@ const Settings = () => {
                     ))}
                 </div>
 
-                {/* Logout — only visible on mobile */}
                 <button
                     onClick={logout}
                     className="w-full flex items-center gap-3.5 px-4 py-3.5 mt-4 bg-white dark:bg-gray-800 rounded-2xl border border-red-200 dark:border-red-900/50 text-left hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors active:bg-red-100"
@@ -586,9 +580,7 @@ const Settings = () => {
             </div>
 
             <div className="flex gap-6 items-start">
-                {/* Nav rail */}
                 <nav aria-label="Settings sections" className="w-64 flex-shrink-0 sticky top-4 rounded-xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800/40 p-2">
-                    {/* Edge-style search */}
                     <div className="relative px-1 pt-1 pb-2">
                         <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
                         <input
@@ -637,9 +629,7 @@ const Settings = () => {
                     </div>
                 </nav>
 
-                {/* Content Area */}
                 <div className="flex-1 min-w-0">
-                    {/* Content header band */}
                     <div className="flex items-center gap-3 mb-5">
                         <span className="w-9 h-9 rounded-lg bg-gray-100 dark:bg-gray-700/50 text-gray-600 dark:text-gray-300 flex items-center justify-center flex-shrink-0">
                             <CurrentIcon size={18} />

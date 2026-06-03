@@ -109,7 +109,6 @@ const AnimatedBackground = memo(() => {
                                     animationDuration: `${4 + (i % 3)}s`,
                                 }}
                             >
-                                {/* Use static characters instead of random */}
                                 {'アイウエオカキクケコサシスセソタチツテト'.split('').map((char, j) => (
                                     <span key={j} style={{ animationDelay: `${j * 0.15}s` }}>
                                         {char}

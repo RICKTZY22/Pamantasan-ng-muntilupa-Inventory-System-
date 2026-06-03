@@ -206,6 +206,20 @@ def broadcast_to_members(conversation, payload):
     transaction.on_commit(_send)
 
 
+def broadcast_to_user_ids(user_ids, payload):
+    """Fan-out to known user ids without reloading a conversation."""
+    layer = get_channel_layer()
+    if not layer:
+        return
+    uids = list(user_ids)
+
+    def _send():
+        for uid in uids:
+            async_to_sync(layer.group_send)(group_name(uid), payload)
+
+    transaction.on_commit(_send)
+
+
 def notify_user(user_id, notification_payload):
     """Push a single in-app notification to a user's personal WS group so the
     bell updates instantly (no polling). Best-effort: silently no-ops if the

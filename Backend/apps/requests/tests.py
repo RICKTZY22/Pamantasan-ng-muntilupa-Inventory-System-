@@ -3,14 +3,16 @@ from io import StringIO
 
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
+from django.db import IntegrityError, transaction
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from apps.inventory.models import Item
 from apps.requests.models import Notification, Request
-from apps.requests.notifications import notify_many
+from apps.requests.notifications import create_notif_if_new, notify_many
 from apps.requests.overdue import run_overdue_scan
+from apps.requests.serializers import RequestSerializer
 
 
 class RequestXssTests(APITestCase):
@@ -138,6 +140,24 @@ class RequestXssTests(APITestCase):
         self.assertEqual(req.status, Request.Status.APPROVED)
         self.assertEqual(self.item.quantity, 1)
 
+    def test_cancelled_request_cannot_be_cancelled_twice(self):
+        req = Request.objects.create(
+            item=self.item,
+            item_name=self.item.name,
+            requested_by=self.student,
+            quantity=1,
+            purpose='Class presentation',
+        )
+        self.client.force_authenticate(self.student)
+
+        first = self.client.post(f'/api/requests/{req.id}/cancel/')
+        second = self.client.post(f'/api/requests/{req.id}/cancel/')
+
+        req.refresh_from_db()
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 400)
+        self.assertEqual(req.status, Request.Status.CANCELLED)
+
 
 class ReturnHandshakeTests(APITestCase):
     """Two-step return: borrower requests → staff confirms receipt. Guards
@@ -164,6 +184,15 @@ class ReturnHandshakeTests(APITestCase):
         self.assertEqual(self.req.status, 'RETURN_PENDING')
         self.assertEqual(self.item.quantity, 1)            # stock NOT restored yet
         self.assertEqual(self.item.status, 'IN_USE')
+
+    def test_request_return_second_click_sees_locked_state(self):
+        self.client.force_authenticate(self.student)
+        first = self.client.post(f'/api/requests/{self.req.id}/request_return/')
+        second = self.client.post(f'/api/requests/{self.req.id}/request_return/')
+        self.req.refresh_from_db()
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 400)
+        self.assertEqual(self.req.status, 'RETURN_PENDING')
 
     def test_confirm_requires_pending_so_a_mispress_closes_nothing(self):
         """A staff press to confirm does nothing unless the borrower started the
@@ -202,6 +231,23 @@ class ReturnHandshakeTests(APITestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(self.req.status, 'APPROVED')
         self.assertIsNone(self.req.return_requested_at)
+
+    def test_nonreturnable_complete_second_click_sees_locked_state(self):
+        consumable = Item.objects.create(
+            name='Bond Paper', category=Item.Category.SUPPLIES, quantity=0,
+            status=Item.Status.AVAILABLE, access_level='STUDENT', is_returnable=False,
+        )
+        req = Request.objects.create(
+            item=consumable, item_name=consumable.name, requested_by=self.student,
+            quantity=1, purpose='Class', status='APPROVED',
+        )
+        self.client.force_authenticate(self.student)
+        first = self.client.post(f'/api/requests/{req.id}/complete/')
+        second = self.client.post(f'/api/requests/{req.id}/complete/')
+        req.refresh_from_db()
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 400)
+        self.assertEqual(req.status, 'COMPLETED')
 
 
 class OverdueNotificationTests(APITestCase):
@@ -244,6 +290,28 @@ class OverdueNotificationTests(APITestCase):
             1,
         )
 
+    def test_unread_overdue_notification_has_database_guard(self):
+        req = self._overdue_request()
+        Notification.objects.create(recipient=self.student, request=req, type='OVERDUE', message='overdue 1')
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Notification.objects.create(recipient=self.student, request=req, type='OVERDUE', message='overdue 2')
+
+    def test_create_notif_if_new_swallows_duplicate_overdue_insert(self):
+        req = self._overdue_request()
+        create_notif_if_new(self.student, req, 'OVERDUE', 'overdue 1')
+        duplicate = create_notif_if_new(self.student, req, 'OVERDUE', 'overdue 2')
+
+        self.assertIsNone(duplicate)
+        self.assertEqual(Notification.objects.filter(recipient=self.student, request=req, type='OVERDUE').count(), 1)
+
+    def test_return_pending_request_serializes_as_overdue(self):
+        req = self._overdue_request(status='RETURN_PENDING')
+
+        data = RequestSerializer(req).data
+
+        self.assertTrue(data['isOverdue'])
+
     def test_check_overdue_management_command_runs(self):
         self._overdue_request()
         out = StringIO()
@@ -264,13 +332,87 @@ class NotifyManyTests(TestCase):
             item=self.item, item_name='X', requested_by=self.student, quantity=1, purpose='x',
         )
 
-    def test_notify_many_creates_then_dedups(self):
+    def test_two_different_status_change_events_both_deliver(self):
         created = notify_many([self.s1, self.s2], request_obj=self.req, notif_type='STATUS_CHANGE', message='hi')
         self.assertEqual(len(created), 2)
-        # Both recipients now have an unread notif of this type+request → skipped.
+        # STATUS_CHANGE is an event stream, not a reminder; a new message should
+        # still deliver even while an older one is unread.
         again = notify_many([self.s1, self.s2], request_obj=self.req, notif_type='STATUS_CHANGE', message='hi again')
+        self.assertEqual(len(again), 2)
+        self.assertEqual(Notification.objects.filter(request=self.req, type='STATUS_CHANGE').count(), 4)
+
+    def test_overdue_notify_many_still_dedups_unread_reminders(self):
+        created = notify_many([self.s1, self.s2], request_obj=self.req, notif_type='OVERDUE', message='overdue')
+        again = notify_many([self.s1, self.s2], request_obj=self.req, notif_type='OVERDUE', message='overdue again')
+
+        self.assertEqual(len(created), 2)
         self.assertEqual(len(again), 0)
-        self.assertEqual(Notification.objects.filter(request=self.req, type='STATUS_CHANGE').count(), 2)
+        self.assertEqual(Notification.objects.filter(request=self.req, type='OVERDUE').count(), 2)
+
+
+class RequestListFilterTests(APITestCase):
+    """The Requests list endpoint must paginate and support the status / overdue /
+    mine filters and priority-first ordering the paged UI relies on."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.staff = User.objects.create_user(username='liststaff', password='password', role='STAFF')
+        self.student = User.objects.create_user(username='liststudent', password='password', role='STUDENT')
+        self.item = Item.objects.create(
+            name='Camera', category=Item.Category.ELECTRONICS, quantity=5,
+            status=Item.Status.AVAILABLE, access_level='STUDENT',
+        )
+
+    def _make(self, **kw):
+        defaults = dict(
+            item=self.item, item_name=self.item.name, requested_by=self.student,
+            quantity=1, purpose='x', status='PENDING',
+        )
+        defaults.update(kw)
+        return Request.objects.create(**defaults)
+
+    def test_list_is_paginated(self):
+        for _ in range(3):
+            self._make()
+        self.client.force_authenticate(self.staff)
+        resp = self.client.get('/api/requests/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('results', resp.data)
+        self.assertEqual(resp.data['count'], 3)
+
+    def test_status_filter(self):
+        self._make(status='PENDING')
+        self._make(status='APPROVED')
+        self.client.force_authenticate(self.staff)
+        resp = self.client.get('/api/requests/?status=APPROVED')
+        self.assertEqual(resp.data['count'], 1)
+        self.assertTrue(all(r['status'] == 'APPROVED' for r in resp.data['results']))
+
+    def test_overdue_filter_uses_outstanding_and_due_date(self):
+        self._make(status='APPROVED', expected_return=timezone.now() - timedelta(days=2))   # overdue
+        self._make(status='APPROVED', expected_return=timezone.now() + timedelta(days=2))   # not yet due
+        self._make(status='PENDING')                                                        # not outstanding
+        self.client.force_authenticate(self.staff)
+        resp = self.client.get('/api/requests/?overdue=true')
+        self.assertEqual(resp.data['count'], 1)
+        self.assertTrue(resp.data['results'][0]['isOverdue'])
+
+    def test_mine_filter_limits_to_caller(self):
+        self._make(requested_by=self.staff)
+        self._make(requested_by=self.student)
+        self.client.force_authenticate(self.staff)
+        resp = self.client.get('/api/requests/?mine=true')
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['results'][0]['requestedById'], self.staff.id)
+
+    def test_priority_ordering_high_first(self):
+        self._make(priority='LOW')
+        self._make(priority='HIGH')
+        self._make(priority='MEDIUM')
+        self.client.force_authenticate(self.staff)
+        resp = self.client.get('/api/requests/')
+        priorities = [r['priority'] for r in resp.data['results']]
+        self.assertEqual(priorities, ['HIGH', 'MEDIUM', 'LOW'])
 
 
 class RequestEndpointLockdownTests(APITestCase):

@@ -4,7 +4,6 @@ import { ROLES } from '../utils/roles';
 import { formatApiError } from '../utils/errorUtils';
 
 const useUsers = () => {
-    // state
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
@@ -29,14 +28,12 @@ const useUsers = () => {
             const data = await userService.getAll(filters);
             const rawItems = Array.isArray(data) ? data : data.results || [];
 
-            // Serializer already returns camelCase — just ensure fullName fallback
             const items = rawItems.map(u => ({
                 ...u,
                 fullName: u.fullName || `${u.first_name || ''} ${u.last_name || ''}`.trim() || u.username,
             }));
             setUsers(items);
 
-            // Single-pass stats computation (was 7 separate .filter() calls)
             const counts = items.reduce((acc, u) => {
                 if (u.isActive) acc.active++; else acc.inactive++;
                 if (u.isFlagged) acc.flagged++;
@@ -67,8 +64,8 @@ const useUsers = () => {
                 faculty: data.byRole?.faculty || 0,
                 students: data.byRole?.students || 0,
             });
-        } catch (err) {
-            // stats fetch failed — non-critical
+        } catch {
+            return;
         }
     }, []);
 
@@ -102,11 +99,9 @@ const useUsers = () => {
             const result = await userService.toggleStatus(userId);
             const isNowActive = result.user?.is_active ?? result.user?.isActive;
 
-            // gamitin yung actual server response, hindi optimistic flip
             setUsers(prev => prev.map(u =>
                 u.id === userId ? { ...u, isActive: isNowActive } : u
             ));
-            // Update stats from actual state
             setStats(prev => {
                 const newActive = prev.active + (isNowActive ? 1 : -1);
                 return {

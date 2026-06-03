@@ -2,6 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.contrib.auth import get_user_model
+from django.db.models import Count, Q
 
 from apps.authentication.serializers import UserSerializer
 from apps.permissions import IsAdmin
@@ -16,13 +17,13 @@ class UserViewSet(viewsets.ModelViewSet):
     serializer_class = UserSerializer
     permission_classes = [IsAdmin]
     
-    def get_queryset(self): # type: ignore
+    def get_queryset(self):
         """Filter and search users."""
         queryset = User.objects.all()
         
-        search = self.request.query_params.get('search', '') # type: ignore
-        role = self.request.query_params.get('role', '') # type: ignore
-        is_active = self.request.query_params.get('is_active', '') # type: ignore
+        search = self.request.query_params.get('search', '')
+        role = self.request.query_params.get('role', '')
+        is_active = self.request.query_params.get('is_active', '')
         
         if search:
             queryset = queryset.filter(
@@ -139,18 +140,26 @@ class UserViewSet(viewsets.ModelViewSet):
     def stats(self, request):
         """Get user statistics."""
         queryset = User.objects.all()
-        
-        stats = {
-            'total': queryset.count(),
-            'active': queryset.filter(is_active=True).count(),
-            'inactive': queryset.filter(is_active=False).count(),
-            'flagged': queryset.filter(is_flagged=True).count(),
+
+        # Role counts stay grouped so this endpoint does not run one query per role.
+        role_counts = dict(
+            queryset.values('role').annotate(count=Count('id')).values_list('role', 'count')
+        )
+
+        # Overall totals are one aggregate query.
+        totals = queryset.aggregate(
+            total=Count('id'),
+            active=Count('id', filter=Q(is_active=True)),
+            inactive=Count('id', filter=Q(is_active=False)),
+            flagged=Count('id', filter=Q(is_flagged=True)),
+        )
+
+        return Response({
+            **totals,
             'byRole': {
-                'students': queryset.filter(role='STUDENT').count(),
-                'faculty': queryset.filter(role='FACULTY').count(),
-                'staff': queryset.filter(role='STAFF').count(),
-                'admin': queryset.filter(role='ADMIN').count(),
+                'students': role_counts.get(User.Role.STUDENT, 0),
+                'faculty': role_counts.get(User.Role.FACULTY, 0),
+                'staff': role_counts.get(User.Role.STAFF, 0),
+                'admin': role_counts.get(User.Role.ADMIN, 0),
             },
-        }
-        
-        return Response(stats)
+        })

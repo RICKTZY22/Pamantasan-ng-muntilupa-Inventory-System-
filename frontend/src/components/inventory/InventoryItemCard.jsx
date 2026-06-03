@@ -1,5 +1,3 @@
-// Card component for inventory grid view — pulled out of Inventory.jsx
-// because that file was getting way too long (was 1100+ lines lol)
 import React from 'react';
 import { Star, Eye, MapPin, ArrowRight, PencilSimple as Edit, Trash as Trash2, QrCode, FileText, Warning as AlertTriangle, XCircle } from '@phosphor-icons/react';
 import { Button, Card } from '../ui';
@@ -34,8 +32,6 @@ const accessLevelColors = {
     ADMIN: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
 };
 
-// Single card in the inventory grid. Receives everything via props
-// so it stays pure & easy to test (no hooks, no store access).
 const InventoryItemCard = ({
     item,
     showImages,
@@ -123,12 +119,10 @@ const InventoryItemCard = ({
                         </span>
                     )}
                     <StaffOnly>
-                        {/* FIXME: using idx as key here isn't great if actions
-                           get reordered, but actions are static per status so it's fine for now */}
-                        {getStatusActions(item).map((action, idx) => {
+                        {getStatusActions(item).map((action) => {
                             const ActionIcon = action.icon;
                             return (
-                                <Button key={idx} variant="ghost" size="sm" onClick={action.onClick} title={action.label} className={`flex-1 hover:scale-105 transition-transform ${action.color}`}>
+                                <Button key={action.label} variant="ghost" size="sm" onClick={action.onClick} title={action.label} className={`flex-1 hover:scale-105 transition-transform ${action.color}`}>
                                     <ActionIcon size={14} />
                                 </Button>
                             );

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Plus, MagnifyingGlass as Search, Check, X, Clock, CheckCircle, Package, Lock, Eye, FileText, User, CalendarBlank as Calendar, ArrowCounterClockwise as RotateCcw, Trash as Trash2, Warning as AlertTriangle, Timer, Prohibit as Ban, CaretDown as ChevronDown, CaretRight as ChevronRight, Flag } from '@phosphor-icons/react';
 import { Button, Input, Card, Modal, Table } from '../components/ui';
 import { StaffOnly } from '../components/auth';
@@ -22,6 +22,19 @@ const priorityConfig = {
     MEDIUM: { label: 'Medium', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300', icon: '🟡', weight: 2 },
     LOW: { label: 'Low', color: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300', icon: '⚪', weight: 1 },
 };
+
+// Status tabs for the paged Requests list. 'OVERDUE' is a pseudo-status (server
+// filters by outstanding + past-due); the rest map straight to Request.status.
+const STATUS_TABS = [
+    { key: 'PENDING', label: 'Pending' },
+    { key: 'OVERDUE', label: 'Overdue' },
+    { key: 'APPROVED', label: 'Approved' },
+    { key: 'RETURN_PENDING', label: 'Return Pending' },
+    { key: 'COMPLETED', label: 'Completed' },
+    { key: 'RETURNED', label: 'Returned' },
+    { key: 'REJECTED', label: 'Rejected' },
+    { key: 'CANCELLED', label: 'Cancelled' },
+];
 
 const PriorityBadge = ({ priority }) => {
     const cfg = priorityConfig[priority] || priorityConfig.MEDIUM;
@@ -87,7 +100,6 @@ const RequestActionButtons = ({ request, isOwn, isStaffPlus, compact, onView, on
 
 const RequestMobileCard = ({ request, isOwn, ...actions }) => (
     <div className="p-3 space-y-2">
-        {/* Row 1: Item name */}
         <div className="flex items-center justify-between gap-2">
             <p className="font-semibold text-sm text-gray-900 dark:text-white truncate">{request.itemName}</p>
             <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -95,7 +107,6 @@ const RequestMobileCard = ({ request, isOwn, ...actions }) => (
                 <span className="text-xs text-gray-400">×{request.quantity}</span>
             </div>
         </div>
-        {/* Row 2: Meta info */}
         <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
             <span className="flex items-center gap-1">
                 <User size={12} />{request.requestedBy}
@@ -105,9 +116,7 @@ const RequestMobileCard = ({ request, isOwn, ...actions }) => (
             </span>
             <span className="flex items-center gap-1"><Calendar size={12} />{request.requestDate}</span>
         </div>
-        {/* Row 3: Purpose */}
         {request.purpose && <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{request.purpose}</p>}
-        {/* Row 4: Actions */}
         <RequestActionButtons request={request} isOwn={isOwn} compact {...actions} />
     </div>
 );
@@ -189,7 +198,10 @@ const Requests = () => {
     const {
         requests,
         loading,
-        fetchRequests,
+        stats,
+        totalCount,
+        fetchPage,
+        fetchStats,
         approveRequest,
         rejectRequest,
         cancelRequest,
@@ -200,16 +212,19 @@ const Requests = () => {
         createRequest,
         checkOverdue
     } = useRequests();
+    const PAGE_SIZE = 50;  // matches the backend REST_FRAMEWORK PAGE_SIZE
     const { getAccessibleItems, fetchInventory } = useInventory();
     const { user } = useAuthStore();
     const location = useLocation();
 
-    // default view: students = sariling requests lang, staff+ = lahat
     const isStaffPlus = hasMinRole(user?.role, ROLES.STAFF);
     const [viewMode, setViewMode] = useState(isStaffPlus ? 'all' : 'mine');
 
     const [search, setSearch] = useState('');
-    const [filterStatus, setFilterStatus] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState('');
+    const [activeTab, setActiveTab] = useState('PENDING');  // status tab; 'OVERDUE' is a pseudo-status
+    const [page, setPage] = useState(1);
+    const [reloadKey, setReloadKey] = useState(0);          // bump to force a refetch (after actions)
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [rejectModalOpen, setRejectModalOpen] = useState(false);
     const [selectedRequestId, setSelectedRequestId] = useState(null);
@@ -222,14 +237,10 @@ const Requests = () => {
     const [detailModalOpen, setDetailModalOpen] = useState(false);
     const [detailRequest, setDetailRequest] = useState(null);
 
-    // para ma-collapse/expand yung mga status sections
-    const [collapsedSections, setCollapsedSections] = useState({});
-
     const [itemSearch, setItemSearch] = useState('');
     const [selectedItem, setSelectedItem] = useState(null);
     const [showDropdown, setShowDropdown] = useState(false);
 
-    // kukunin yung naka-save na preferences ng user sa localStorage
     const savedPrefsKey = user?.id ? `user-prefs-${user.id}` : null;
     const savedPrefs = useMemo(() => {
         if (!savedPrefsKey) return {};
@@ -247,22 +258,47 @@ const Requests = () => {
     });
     const [formError, setFormError] = useState('');
 
+    // Debounce the search box so typing doesn't fire a request per keystroke;
+    // reset to the first page whenever the query changes.
     useEffect(() => {
-        fetchRequests({ search, status: filterStatus });
-        // FIXME: nag-rrefresh ng dalawang beses pag mabilis mag type, need debounce
-    }, [search, filterStatus, fetchRequests]);
+        const t = setTimeout(() => { setDebouncedSearch(search.trim()); setPage(1); }, 300);
+        return () => clearTimeout(t);
+    }, [search]);
 
-    // check kung may overdue pag nag-load yung page
+    // Server-side filter for the active status tab ('OVERDUE' is a pseudo-status).
+    const tabParams = useMemo(() => {
+        const params = { mine: viewMode === 'mine', search: debouncedSearch };
+        if (activeTab === 'OVERDUE') params.overdue = true;
+        else if (activeTab) params.status = activeTab;
+        return params;
+    }, [activeTab, viewMode, debouncedSearch]);
+
+    // Fetch ONE 50-row page for the active tab whenever the filter/page changes
+    // (or reloadKey is bumped after an action). No more loading the whole table.
+    useEffect(() => {
+        fetchPage({ ...tabParams, page });
+    }, [tabParams, page, reloadKey, fetchPage]);
+
+    // Summary cards use the aggregate stats endpoint (refreshed after actions).
+    useEffect(() => {
+        fetchStats();
+    }, [fetchStats, reloadKey]);
+
+    // After an action: go back to page 1 and refetch. Staying on page 1 means we
+    // can never sit on a now-empty out-of-range page (no DRF 404).
+    const reload = useCallback(() => {
+        setPage(1);
+        setReloadKey(k => k + 1);
+    }, []);
+
     useEffect(() => {
         checkOverdue();
     }, [checkOverdue]);
 
-    // kailangan i-fetch yung inventory items para gumana yung dropdown
     useEffect(() => {
         fetchInventory();
     }, [fetchInventory]);
 
-    // pag galing sa Inventory page, auto-fill na yung item
     useEffect(() => {
         const prefill = location.state?.prefillItem;
         if (prefill) {
@@ -280,42 +316,18 @@ const Requests = () => {
         return getAccessibleItems(user.role, itemSearch);
     }, [user?.role, itemSearch, getAccessibleItems]);
 
-    // filter ng requests - view mode, search, at status
-    const displayedRequests = useMemo(() => {
-        let result = requests;
-        if (viewMode === 'mine') {
-            result = result.filter(r => r.requestedById === user?.id);
-        }
-        if (search.trim()) {
-            const q = search.toLowerCase();
-            result = result.filter(r =>
-                (r.itemName || '').toLowerCase().includes(q) ||
-                (r.requestedBy || '').toLowerCase().includes(q) ||
-                (r.purpose || '').toLowerCase().includes(q)
-            );
-        }
-        if (filterStatus) {
-            result = result.filter(r => r.status === filterStatus);
-        }
-        return result;
-    }, [requests, viewMode, user?.id, search, filterStatus]);
-
-    // bilang ng requests per status para sa cards sa taas
-    const displayedStats = useMemo(() => {
-        const items = displayedRequests;
-        return {
-            total: items.length,
-            pending: items.filter(r => r.status === 'PENDING').length,
-            approved: items.filter(r => r.status === 'APPROVED').length,
-            completed: items.filter(r => r.status === 'COMPLETED').length,
-            rejected: items.filter(r => r.status === 'REJECTED').length,
-            overdue: items.filter(r => r.isOverdue).length,
-        };
-    }, [displayedRequests]);
+    // The list now shows one server page at a time; totalPages drives the controls.
+    const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
     const handleApprove = async (id) => {
-        await approveRequest(id);
+        const res = await approveRequest(id);
+        if (res?.success) reload();
     };
+
+    // Return-handshake actions, wrapped so the page refreshes after each.
+    const handleReturn = async (id) => { const res = await returnRequest(id); if (res?.success) reload(); };
+    const handleConfirmReturn = async (id) => { const res = await confirmReturn(id); if (res?.success) reload(); };
+    const handleCancelReturn = async (id) => { const res = await cancelReturn(id); if (res?.success) reload(); };
 
     const handleRejectClick = (id) => {
         setSelectedRequestId(id);
@@ -323,10 +335,11 @@ const Requests = () => {
     };
 
     const handleRejectConfirm = async () => {
-        await rejectRequest(selectedRequestId, rejectReason);
+        const res = await rejectRequest(selectedRequestId, rejectReason);
         setRejectModalOpen(false);
         setRejectReason('');
         setSelectedRequestId(null);
+        if (res?.success) reload();
     };
 
     const handleSelectItem = (inventoryItem) => {
@@ -350,11 +363,12 @@ const Requests = () => {
             quantity: formData.quantity,
             purpose: formData.purpose,
         };
-        await createRequest(payload);
+        const res = await createRequest(payload);
         setIsModalOpen(false);
         setFormData({ itemName: '', item: null, quantity: savedPrefs.defaultQuantity || 1, purpose: savedPrefs.defaultPurpose || '' });
         setItemSearch('');
         setSelectedItem(null);
+        if (res?.success) reload();
     };
 
     const handleCancelClick = (id) => {
@@ -363,16 +377,18 @@ const Requests = () => {
     };
 
     const handleCancelConfirm = async () => {
+        let res;
         if (cancelRequestId) {
-            await cancelRequest(cancelRequestId);
+            res = await cancelRequest(cancelRequestId);
         }
         setCancelModalOpen(false);
         setCancelRequestId(null);
+        if (res?.success) reload();
     };
 
     return (
         <div className="space-y-6">
-            {/* Header */}
+            {/* Page header */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div>
                     <h1 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white">Requests</h1>
@@ -380,7 +396,7 @@ const Requests = () => {
                 </div>
                 <div className="flex gap-2">
                     <StaffOnly>
-                        <Button variant="outline" icon={Trash2} onClick={() => clearCompleted()} className="text-gray-600">
+                        <Button variant="outline" icon={Trash2} onClick={async () => { const res = await clearCompleted(); if (res?.success) reload(); }} className="text-gray-600">
                             <span className="hidden md:inline">Clear Completed</span>
                         </Button>
                     </StaffOnly>
@@ -390,61 +406,61 @@ const Requests = () => {
                 </div>
             </div>
 
-            {/* F-01: View Mode Tabs */}
+            {/* View mode tabs */}
             <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 rounded-xl p-1 w-fit">
                 <button
-                    onClick={() => setViewMode('mine')}
+                    onClick={() => { setViewMode('mine'); setPage(1); }}
                     className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${viewMode === 'mine'
                         ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
                         : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
                         }`}
                 >
                     My Requests
-                    {viewMode === 'mine' && <span className="ml-1.5 text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">{displayedStats.total}</span>}
+                    {viewMode === 'mine' && <span className="ml-1.5 text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">{stats.total}</span>}
                 </button>
                 {isStaffPlus && (
                     <button
-                        onClick={() => setViewMode('all')}
+                        onClick={() => { setViewMode('all'); setPage(1); }}
                         className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${viewMode === 'all'
                             ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
                             : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
                             }`}
                     >
                         All Requests
-                        {viewMode === 'all' && <span className="ml-1.5 text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">{displayedStats.total}</span>}
+                        {viewMode === 'all' && <span className="ml-1.5 text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">{stats.total}</span>}
                     </button>
                 )}
             </div>
 
-            {/* Stats */}
+            {/* Summary cards */}
             <div className="grid grid-cols-3 md:grid-cols-6 gap-2 md:gap-3">
                 <Card className="text-center py-2.5 md:py-4">
-                    <p className="text-lg md:text-2xl font-bold text-gray-900 dark:text-white">{displayedStats.total}</p>
+                    <p className="text-lg md:text-2xl font-bold text-gray-900 dark:text-white">{stats.total}</p>
                     <p className="text-[10px] md:text-sm text-gray-500 dark:text-gray-400">Total</p>
                 </Card>
                 <Card className="text-center py-2.5 md:py-4">
-                    <p className="text-lg md:text-2xl font-bold text-amber-600">{displayedStats.pending}</p>
+                    <p className="text-lg md:text-2xl font-bold text-amber-600">{stats.pending}</p>
                     <p className="text-[10px] md:text-sm text-gray-500 dark:text-gray-400">Pending</p>
                 </Card>
                 <Card className="text-center py-2.5 md:py-4">
-                    <p className="text-lg md:text-2xl font-bold text-emerald-600">{displayedStats.approved}</p>
+                    <p className="text-lg md:text-2xl font-bold text-emerald-600">{stats.approved}</p>
                     <p className="text-[10px] md:text-sm text-gray-500 dark:text-gray-400">Approved</p>
                 </Card>
                 <Card className="text-center py-2.5 md:py-4">
-                    <p className="text-lg md:text-2xl font-bold text-blue-600">{displayedStats.completed}</p>
+                    <p className="text-lg md:text-2xl font-bold text-blue-600">{stats.completed}</p>
                     <p className="text-[10px] md:text-sm text-gray-500 dark:text-gray-400">Completed</p>
                 </Card>
                 <Card className="text-center py-2.5 md:py-4">
-                    <p className="text-lg md:text-2xl font-bold text-red-600">{displayedStats.rejected}</p>
+                    <p className="text-lg md:text-2xl font-bold text-red-600">{stats.rejected}</p>
                     <p className="text-[10px] md:text-sm text-gray-500 dark:text-gray-400">Rejected</p>
                 </Card>
                 <Card className="text-center py-2.5 md:py-4">
-                    <p className="text-lg md:text-2xl font-bold text-orange-600">{displayedStats.overdue}</p>
+                    <p className="text-lg md:text-2xl font-bold text-orange-600">{stats.overdue}</p>
                     <p className="text-[10px] md:text-sm text-gray-500 dark:text-gray-400">Overdue</p>
                 </Card>
             </div>
 
-            {/* Filters */}
+            {/* Search and status filter */}
             <Card>
                 <div className="flex flex-col md:flex-row gap-4">
                     <div className="flex-1">
@@ -455,107 +471,89 @@ const Requests = () => {
                             onChange={(e) => setSearch(e.target.value)}
                         />
                     </div>
-                    <select
-                        className="px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-primary outline-none"
-                        value={filterStatus}
-                        onChange={(e) => setFilterStatus(e.target.value)}
-                    >
-                        <option value="">All Status</option>
-                        <option value="PENDING">Pending</option>
-                        <option value="APPROVED">Approved</option>
-                        <option value="RETURN_PENDING">Return Pending</option>
-                        <option value="REJECTED">Rejected</option>
-                        <option value="COMPLETED">Completed</option>
-                        <option value="RETURNED">Returned</option>
-                        <option value="CANCELLED">Cancelled</option>
-                    </select>
                 </div>
             </Card>
 
-            {/* Grouped by Status */}
+            {/* Status tabs — each loads a server-paginated page of that status */}
+            <div className="flex items-center gap-1 overflow-x-auto pb-1">
+                {STATUS_TABS.map(tab => (
+                    <button
+                        key={tab.key}
+                        type="button"
+                        onClick={() => { setActiveTab(tab.key); setPage(1); }}
+                        className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${activeTab === tab.key
+                            ? 'bg-primary text-white shadow-sm'
+                            : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
+                            }`}
+                    >
+                        {tab.label}
+                    </button>
+                ))}
+            </div>
+
             {loading ? (
                 <div className="flex items-center justify-center py-16">
                     <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent" />
                     <span className="ml-3 text-gray-500">Loading requests...</span>
                 </div>
-            ) : displayedRequests.length === 0 ? (
+            ) : requests.length === 0 ? (
                 <Card className="py-12 text-center">
                     <Package size={40} className="mx-auto text-gray-300 mb-3" />
                     <p className="text-gray-500 text-sm">
-                        {viewMode === 'mine'
-                            ? "You haven't made any requests yet. Browse items and request what you need!"
-                            : 'No requests found'}
+                        {search.trim()
+                            ? 'No requests match your search.'
+                            : `No ${(STATUS_TABS.find(t => t.key === activeTab)?.label || '').toLowerCase()} requests.`}
                     </p>
                 </Card>
-            ) : (() => {
-                // Define status groups in display order
-                const statusGroups = [
-                    { key: 'OVERDUE', label: 'Overdue', icon: AlertTriangle, color: 'bg-orange-500', textColor: 'text-orange-700', bgLight: 'bg-orange-50 dark:bg-orange-900/10', borderColor: 'border-orange-200 dark:border-orange-800/30', filter: r => r.isOverdue },
-                    { key: 'PENDING', label: 'Pending', icon: Clock, color: 'bg-amber-500', textColor: 'text-amber-700', bgLight: 'bg-amber-50 dark:bg-amber-900/10', borderColor: 'border-amber-200 dark:border-amber-800/30', filter: r => r.status === 'PENDING' && !r.isOverdue },
-                    { key: 'APPROVED', label: 'Approved', icon: CheckCircle, color: 'bg-emerald-500', textColor: 'text-emerald-700', bgLight: 'bg-emerald-50 dark:bg-emerald-900/10', borderColor: 'border-emerald-200 dark:border-emerald-800/30', filter: r => r.status === 'APPROVED' && !r.isOverdue },
-                    { key: 'RETURN_PENDING', label: 'Return Pending', icon: RotateCcw, color: 'bg-indigo-500', textColor: 'text-indigo-700', bgLight: 'bg-indigo-50 dark:bg-indigo-900/10', borderColor: 'border-indigo-200 dark:border-indigo-800/30', filter: r => r.status === 'RETURN_PENDING' && !r.isOverdue },
-                    { key: 'COMPLETED', label: 'Completed', icon: Check, color: 'bg-blue-500', textColor: 'text-blue-700', bgLight: 'bg-blue-50 dark:bg-blue-900/10', borderColor: 'border-blue-200 dark:border-blue-800/30', filter: r => r.status === 'COMPLETED' && !r.isOverdue },
-                    { key: 'RETURNED', label: 'Returned', icon: RotateCcw, color: 'bg-purple-500', textColor: 'text-purple-700', bgLight: 'bg-purple-50 dark:bg-purple-900/10', borderColor: 'border-purple-200 dark:border-purple-800/30', filter: r => r.status === 'RETURNED' },
-                    { key: 'REJECTED', label: 'Rejected', icon: X, color: 'bg-red-500', textColor: 'text-red-700', bgLight: 'bg-red-50 dark:bg-red-900/10', borderColor: 'border-red-200 dark:border-red-800/30', filter: r => r.status === 'REJECTED' },
-                    { key: 'CANCELLED', label: 'Cancelled', icon: Ban, color: 'bg-gray-400', textColor: 'text-gray-600', bgLight: 'bg-gray-50 dark:bg-gray-800/30', borderColor: 'border-gray-200 dark:border-gray-700', filter: r => r.status === 'CANCELLED' },
-                ];
+            ) : (
+                <div className="space-y-3">
+                    <div className="rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+                        <RequestGroupBody
+                            groupRequests={requests}
+                            user={user}
+                            isStaffPlus={isStaffPlus}
+                            handleApprove={handleApprove}
+                            handleRejectClick={handleRejectClick}
+                            handleCancelClick={handleCancelClick}
+                            returnRequest={handleReturn}
+                            confirmReturn={handleConfirmReturn}
+                            cancelReturn={handleCancelReturn}
+                            setDetailRequest={setDetailRequest}
+                            setDetailModalOpen={setDetailModalOpen}
+                        />
+                    </div>
 
-                // Sort by priority within each group: HIGH (3) → NORMAL (2) → LOW (1)
-                const sortByPriority = (a, b) => {
-                    const wa = (priorityConfig[a.priority] || priorityConfig.MEDIUM).weight;
-                    const wb = (priorityConfig[b.priority] || priorityConfig.MEDIUM).weight;
-                    return wb - wa; // descending: HIGH first
-                };
-
-                return statusGroups.map(group => {
-                    const groupRequests = displayedRequests.filter(group.filter).sort(sortByPriority);
-                    if (groupRequests.length === 0) return null;
-                    const isCollapsed = collapsedSections[group.key];
-                    const GroupIcon = group.icon;
-                    const toggleSection = () => setCollapsedSections(prev => ({ ...prev, [group.key]: !prev[group.key] }));
-
-                    return (
-                        <div key={group.key} className={`rounded-xl border ${group.borderColor} overflow-hidden`}>
-                            {/* Group header — clickable to collapse */}
+                    {/* Pagination — server-side, one 50-row page at a time */}
+                    <div className="flex items-center justify-between gap-3 px-1">
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                            Showing <span className="font-semibold text-gray-700 dark:text-gray-200">{(page - 1) * PAGE_SIZE + 1}</span>
+                            –<span className="font-semibold text-gray-700 dark:text-gray-200">{Math.min(page * PAGE_SIZE, totalCount)}</span>
+                            {' '}of <span className="font-semibold text-gray-700 dark:text-gray-200">{totalCount}</span>
+                        </p>
+                        <div className="flex items-center gap-2">
                             <button
                                 type="button"
-                                onClick={toggleSection}
-                                className={`w-full flex items-center justify-between px-4 py-3 ${group.bgLight} cursor-pointer hover:opacity-90 transition-opacity`}
+                                onClick={() => setPage(p => Math.max(1, p - 1))}
+                                disabled={page <= 1}
+                                className="h-8 rounded-md border border-gray-200 px-3 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
                             >
-                                <div className="flex items-center gap-2">
-                                    <span className={`inline-flex items-center justify-center w-7 h-7 rounded-lg ${group.color} text-white`}>
-                                        <GroupIcon size={16} />
-                                    </span>
-                                    <span className={`font-semibold text-sm ${group.textColor}`}>{group.label}</span>
-                                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${group.color} text-white`}>
-                                        {groupRequests.length}
-                                    </span>
-                                </div>
-                                {isCollapsed ? <ChevronRight size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
+                                Prev
                             </button>
-
-                            {/* Group body */}
-                            {!isCollapsed && (
-                                <RequestGroupBody
-                                    groupRequests={groupRequests}
-                                    user={user}
-                                    isStaffPlus={isStaffPlus}
-                                    handleApprove={handleApprove}
-                                    handleRejectClick={handleRejectClick}
-                                    handleCancelClick={handleCancelClick}
-                                    returnRequest={returnRequest}
-                                    confirmReturn={confirmReturn}
-                                    cancelReturn={cancelReturn}
-                                    setDetailRequest={setDetailRequest}
-                                    setDetailModalOpen={setDetailModalOpen}
-                                />
-                            )}
+                            <span className="px-2 text-sm text-gray-500 dark:text-gray-400">{page} / {totalPages}</span>
+                            <button
+                                type="button"
+                                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                                disabled={page >= totalPages}
+                                className="h-8 rounded-md border border-gray-200 px-3 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
+                            >
+                                Next
+                            </button>
                         </div>
-                    );
-                });
-            })()}
+                    </div>
+                </div>
+            )}
 
-            {/* New Request Modal */}
+            {/* New request modal */}
             <Modal
                 isOpen={isModalOpen}
                 onClose={() => setIsModalOpen(false)}
@@ -563,7 +561,6 @@ const Requests = () => {
                 description="Create a new borrowing or reservation request"
             >
                 <form onSubmit={handleSubmit} className="space-y-4">
-                    {/* Item Autocomplete */}
                     <div className="space-y-1 relative">
                         <label className="block text-xs font-bold text-gray-500 uppercase ml-1">Select Item *</label>
                         <div className="relative">
@@ -588,7 +585,6 @@ const Requests = () => {
                             <p className="text-xs text-red-500 mt-1 ml-1">{formError}</p>
                         )}
 
-                        {/* Dropdown */}
                         {showDropdown && itemSearch && (
                             <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-60 overflow-y-auto">
                                 {filteredItems.length === 0 ? (
@@ -618,7 +614,6 @@ const Requests = () => {
                             </div>
                         )}
 
-                        {/* Selected item badge */}
                         {selectedItem && (
                             <div className="flex items-center gap-2 mt-2 p-2 bg-emerald-50 rounded-lg">
                                 <Check size={16} className="text-emerald-600" />
@@ -638,7 +633,6 @@ const Requests = () => {
                         )}
                     </div>
 
-                    {/* Requester (auto-filled) */}
                     <div className="space-y-1">
                         <label className="block text-xs font-bold text-gray-500 uppercase ml-1">Requested By</label>
                         <div className="px-4 py-3 bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl text-sm text-gray-600 dark:text-gray-300">
@@ -680,7 +674,6 @@ const Requests = () => {
                 </form>
             </Modal>
 
-            {/* Reject Modal */}
             <Modal
                 isOpen={rejectModalOpen}
                 onClose={() => setRejectModalOpen(false)}
@@ -707,7 +700,6 @@ const Requests = () => {
                 </div>
             </Modal>
 
-            {/* Cancel confirmation */}
             <Modal
                 isOpen={cancelModalOpen}
                 onClose={() => setCancelModalOpen(false)}
@@ -733,7 +725,7 @@ const Requests = () => {
                 </div>
             </Modal>
 
-            {/* Request Details Modal */}
+            {/* Request details modal */}
             <Modal
                 isOpen={detailModalOpen}
                 onClose={() => {
@@ -746,7 +738,6 @@ const Requests = () => {
             >
                 {detailRequest && (
                     <div className="space-y-4">
-                        {/* Status Badge + Priority + ID */}
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
                                 <span className={`px-3 py-1 rounded-full text-sm font-medium ${statusColors[detailRequest.status]}`}>
@@ -763,7 +754,6 @@ const Requests = () => {
                             <span className="text-sm text-gray-500">ID: #{detailRequest.id}</span>
                         </div>
 
-                        {/* Item Info */}
                         <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded-xl">
                             <div className="flex items-center gap-3">
                                 <Package className="text-primary" size={22} />
@@ -774,7 +764,6 @@ const Requests = () => {
                             </div>
                         </div>
 
-                        {/* Info Grid */}
                         <div className="grid grid-cols-2 gap-3">
                             <div className="flex items-center gap-2 p-2.5 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
                                 <User className="text-blue-600" size={18} />
@@ -802,7 +791,6 @@ const Requests = () => {
                             </div>
                         </div>
 
-                        {/* Borrow Duration + Expected Return */}
                         {detailRequest.isReturnable && (
                             <div className="grid grid-cols-2 gap-3">
                                 {detailRequest.borrowDuration && (
@@ -833,7 +821,6 @@ const Requests = () => {
                             </div>
                         )}
 
-                        {/* Purpose */}
                         <div className="p-3 bg-gradient-to-br from-primary/5 to-primary/10 dark:from-primary/10 dark:to-primary/20 rounded-xl">
                             <div className="flex items-center gap-2 mb-1">
                                 <FileText className="text-primary" size={16} />
@@ -844,7 +831,6 @@ const Requests = () => {
                             </p>
                         </div>
 
-                        {/* Rejection Reason */}
                         {detailRequest.status === 'REJECTED' && detailRequest.rejectionReason && (
                             <div className="p-4 bg-red-50 dark:bg-red-900/20 rounded-xl border border-red-200 dark:border-red-800">
                                 <div className="flex items-center gap-2 mb-2">
@@ -857,7 +843,6 @@ const Requests = () => {
                             </div>
                         )}
 
-                        {/* Actions */}
                         <div className="flex gap-3 pt-4 border-t dark:border-gray-600">
                             {detailRequest.status === 'PENDING' && hasMinRole(user?.role, ROLES.STAFF) && detailRequest.requestedById !== user?.id && (
                                 <>

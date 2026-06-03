@@ -1,10 +1,6 @@
-import os
-
-from PIL import Image, UnidentifiedImageError
 from rest_framework import status, generics, permissions, serializers
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.decorators import api_view, permission_classes
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
@@ -20,6 +16,7 @@ from .serializers import (
     ChangePasswordSerializer,
 )
 from .models import AuditLog, log_action
+from apps.common.images import validate_image_upload
 from apps.permissions import IsAdmin
 
 User = get_user_model()
@@ -281,63 +278,17 @@ class ProfilePictureView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
-    # Schema hint for DRF docs
     class ProfilePictureSerializer(serializers.Serializer):
         avatar = serializers.ImageField()
     serializer_class = ProfilePictureSerializer
 
-    ALLOWED_MIME = {'image/jpeg', 'image/png', 'image/webp'}
-    ALLOWED_EXT = {'.jpg', '.jpeg', '.png', '.webp'}
-    ALLOWED_FORMATS = {'JPEG', 'PNG', 'WEBP'}  # Pillow's normalized format names
-    MAX_SIZE = 5 * 1024 * 1024  # 5 MB
-
     def post(self, request):
         file = request.FILES.get('avatar')
-        if not file:
-            return Response(
-                {'error': 'No image file provided'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
 
-        # Cheap checks first: size cap, then claimed extension and MIME type.
-        # These reject obvious abuse before we pay the cost of decoding the file.
-        if file.size > self.MAX_SIZE:
-            return Response(
-                {'error': 'Image must be smaller than 5 MB.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if file.content_type not in self.ALLOWED_MIME:
-            return Response(
-                {'error': 'Only JPEG, PNG, and WebP images are allowed.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        ext = os.path.splitext(file.name)[1].lower()
-        if ext not in self.ALLOWED_EXT:
-            return Response(
-                {'error': f'File extension "{ext}" is not allowed.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Content validation: the client can lie about Content-Type and rename a
-        # .exe to .jpg, so verify the actual bytes decode as an image and the
-        # detected format is one we allow. Image.verify() catches truncated and
-        # malformed files; it consumes the stream, so we re-seek before saving.
-        try:
-            file.seek(0)
-            with Image.open(file) as img:
-                detected_format = img.format
-                img.verify()
-        except (UnidentifiedImageError, OSError, ValueError):
-            return Response(
-                {'error': 'File could not be read as a valid image.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if detected_format not in self.ALLOWED_FORMATS:
-            return Response(
-                {'error': 'Only JPEG, PNG, and WebP images are allowed.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # Keep avatar rules aligned with item images and chat attachments.
+        error = validate_image_upload(file)
+        if error:
+            return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
 
         file.seek(0)
         request.user.avatar = file
@@ -352,7 +303,7 @@ class ProfilePictureView(APIView):
 class AuditLogView(APIView):
     """Admin-only listing of audit events. Supports ?limit= and ?action= filters."""
 
-    permission_classes = [IsAdmin]  # admin lang pwede dito
+    permission_classes = [IsAdmin]
 
     def get(self, request):
 
@@ -407,7 +358,7 @@ class BackupView(APIView):
     """Dumps users, inventory, and requests as a downloadable JSON file.
     Admin only."""
 
-    permission_classes = [IsAdmin]  # admin lang din
+    permission_classes = [IsAdmin]
 
     def get(self, request):
 

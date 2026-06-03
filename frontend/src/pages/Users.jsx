@@ -102,7 +102,6 @@ const Users = () => {
     return (
         <AdminOnly showAccessDenied>
             <div className="space-y-6">
-                {/* Header */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div>
                         <p className="text-[11px] font-semibold tracking-wide uppercase text-gray-400 dark:text-gray-500">Management</p>
@@ -115,7 +114,6 @@ const Users = () => {
                     </div>
                 </div>
 
-                {/* Stat chips (click to filter by status) */}
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                     <StatChip icon={UsersIcon} value={stats.total} label="Total Users" tone="blue" onClick={() => setStatusFilter('ALL')} />
                     <StatChip icon={UserCheck} value={stats.active} label="Active" tone="emerald" onClick={() => setStatusFilter('ACTIVE')} />
@@ -123,7 +121,6 @@ const Users = () => {
                     <StatChip icon={AlertTriangle} value={stats.flagged} label="Flagged" tone={stats.flagged > 0 ? 'red' : 'gray'} onClick={() => setStatusFilter('FLAGGED')} />
                 </div>
 
-                {/* Search + role filter chips */}
                 <div className="flex flex-col lg:flex-row gap-3 lg:items-center">
                     <div className="flex-1">
                         <Input icon={Search} placeholder="Search by name, email, or department..." value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -156,7 +153,6 @@ const Users = () => {
                     </p>
                 )}
 
-                {/* Grid */}
                 {loading && users.length === 0 ? (
                     <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                         {[...Array(8)].map((_, i) => (
@@ -185,7 +181,6 @@ const Users = () => {
                 )}
             </div>
 
-            {/* Toast */}
             {toast && (
                 <div className="fixed bottom-6 right-6 z-50">
                     <div className={`px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg border ${toast.type === 'error'
@@ -196,14 +191,12 @@ const Users = () => {
                 </div>
             )}
 
-            {/* Create modal */}
             <CreateUserModal
                 isOpen={showCreate}
                 onClose={() => setShowCreate(false)}
                 onCreated={(msg) => { flash(msg); fetchUsers(); }}
             />
 
-            {/* Delete confirm modal */}
             <Modal isOpen={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Delete User Account">
                 <div>
                     <div className="flex items-center gap-4 mb-4">

@@ -40,9 +40,12 @@ local_settings.py
 
 # IDE
 .claude/
-.cursor/
 .vscode/
 .idea/
+
+# Cursor IDE local files
+.cursor/
+debug-*.log
 *.swp
 *.swo
 

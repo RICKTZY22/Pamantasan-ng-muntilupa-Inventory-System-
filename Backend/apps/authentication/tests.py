@@ -1,6 +1,11 @@
+import io
+import tempfile
+
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
+from PIL import Image as PILImage
 from rest_framework import status
 from rest_framework.test import APITestCase, APIClient
 
@@ -175,3 +180,31 @@ class MaintenanceModeTests(APITestCase):
         self.assertTrue(response.data['enabled'])
         self.assertGreater(response.data['endTime'], 0)
         self.assertIsNotNone(cache.get('plmun_maintenance'))
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp())
+class AvatarUploadTests(APITestCase):
+    """ProfilePictureView must run avatars through the shared image validator."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='avataruser', email='avataruser@plmun.edu.ph',
+            password='StrongPass123!', role=User.Role.STUDENT,
+        )
+        self.client.force_authenticate(self.user)
+
+    @staticmethod
+    def _png_bytes():
+        buffer = io.BytesIO()
+        PILImage.new('RGB', (2, 2), 'green').save(buffer, format='PNG')
+        return buffer.getvalue()
+
+    def test_valid_avatar_accepted(self):
+        good = SimpleUploadedFile('me.png', self._png_bytes(), content_type='image/png')
+        response = self.client.post('/api/auth/profile/picture/', {'avatar': good}, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_invalid_avatar_rejected(self):
+        bad = SimpleUploadedFile('me.png', b'not really an image', content_type='image/png')
+        response = self.client.post('/api/auth/profile/picture/', {'avatar': bad}, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
