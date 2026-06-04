@@ -51,6 +51,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         # Guard the whole dispatch: a malformed client frame (bad type, missing
         # keys, etc.) must never crash the consumer and drop the user's socket.
         try:
+            presence.touch(self.user.id)  # keep the online TTL fresh while active
             t = (content or {}).get('type')
             if t == 'message.send':
                 await self._handle_send(content)
