@@ -8,6 +8,7 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.utils.decorators import method_decorator
 from django_ratelimit.decorators import ratelimit
+import logging
 
 from .serializers import (
     UserSerializer,
@@ -20,6 +21,7 @@ from apps.common.images import validate_image_upload
 from apps.permissions import IsAdmin, IsStaffOrAbove
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 # ── Refresh-token cookie helpers ───────────────────────────────────────────
@@ -237,8 +239,8 @@ class LogoutView(APIView):
             try:
                 from rest_framework_simplejwt.tokens import RefreshToken
                 RefreshToken(refresh).blacklist()
-            except Exception:
-                pass  # already expired/blacklisted/invalid — nothing to do
+            except (TokenError, InvalidToken, AttributeError, ValueError) as exc:
+                logger.info('Logout refresh-token blacklist skipped: %s', exc)
         # Track logout time (logs only if the access token was still valid).
         log_action(AuditLog.LOGOUT, user=request.user, details='Logged out', request=request)
         response = Response({'message': 'Logged out.'}, status=status.HTTP_200_OK)

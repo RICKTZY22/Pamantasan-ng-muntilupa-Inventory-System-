@@ -7,6 +7,16 @@ import { formatApiError } from '../../utils/errorUtils';
 import api from '../../services/api';
 
 const EMPTY = { fullName: '', email: '', username: '', password: '', password2: '', role: 'STUDENT', department: '' };
+const sameText = (left, right) => {
+    const a = String(left);
+    const b = String(right);
+    let diff = a.length ^ b.length;
+    const length = Math.max(a.length, b.length);
+    for (let i = 0; i < length; i += 1) {
+        diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+    }
+    return diff === 0;
+};
 
 // Admin-only "create account" form. Mirrors the original Settings handler:
 // posts to /auth/register/ and reports back via onCreated(message).
@@ -19,7 +29,7 @@ const CreateUserModal = ({ isOpen, onClose, onCreated }) => {
     const close = () => { setForm(EMPTY); setError(''); onClose(); };
 
     const emailInvalid = form.email && !isPlmunEmail(form.email);
-    const pwMismatch = form.password2 && form.password !== form.password2;
+    const pwMismatch = form.password2 && !sameText(form.password, form.password2);
 
     const submit = async () => {
         setError('');
@@ -28,7 +38,7 @@ const CreateUserModal = ({ isOpen, onClose, onCreated }) => {
             setError('Full name, email, username, and password are required.');
             return;
         }
-        if (password !== password2) { setError('Passwords do not match.'); return; }
+        if (!sameText(password, password2)) { setError('Passwords do not match.'); return; }
         if (!isPlmunEmail(email)) { setError('Only @plmun.edu.ph email addresses are allowed.'); return; }
         if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
         try {

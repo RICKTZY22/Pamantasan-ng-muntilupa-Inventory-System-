@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { X, Printer, DownloadSimple as Download, QrCode } from '@phosphor-icons/react';
-import { escapeHtml } from '../../utils/htmlUtils';
+import { openPrintPage } from '../../utils/printUtils';
 
 const QRCodeModal = ({ isOpen, onClose, item }) => {
     const qrRef = useRef(null);
@@ -17,56 +17,47 @@ const QRCodeModal = ({ isOpen, onClose, item }) => {
     });
 
     const handlePrint = () => {
-        const printWindow = window.open('', '_blank');
-        const safeItem = {
-            id: escapeHtml(item.id),
-            name: escapeHtml(item.name),
-            category: escapeHtml(item.category),
-            location: escapeHtml(item.location),
-        };
+        const svg = qrRef.current?.querySelector('svg');
+        openPrintPage({
+            title: `QR Code - ${item.name || 'Item'}`,
+            styles: `
+                body {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    min-height: 100vh;
+                    font-family: Arial, sans-serif;
+                    margin: 0;
+                    padding: 20px;
+                }
+                .container {
+                    text-align: center;
+                    padding: 30px;
+                    border: 2px solid #000;
+                    border-radius: 12px;
+                }
+                h2 { margin: 0 0 5px 0; font-size: 18px; }
+                p { margin: 5px 0; color: #666; font-size: 14px; }
+                .qr-wrapper { margin: 20px 0; }
+                .item-id { font-size: 12px; color: #999; margin-top: 15px; }
+            `,
+            buildBody: (doc, body, textNode) => {
+                const container = doc.createElement('div');
+                container.className = 'container';
+                body.appendChild(container);
 
-        printWindow.document.write(`
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>QR Code - ${safeItem.name}</title>
-                <style>
-                    body {
-                        display: flex;
-                        flex-direction: column;
-                        align-items: center;
-                        justify-content: center;
-                        min-height: 100vh;
-                        font-family: Arial, sans-serif;
-                        margin: 0;
-                        padding: 20px;
-                    }
-                    .container {
-                        text-align: center;
-                        padding: 30px;
-                        border: 2px solid #000;
-                        border-radius: 12px;
-                    }
-                    h2 { margin: 0 0 5px 0; font-size: 18px; }
-                    p { margin: 5px 0; color: #666; font-size: 14px; }
-                    .qr-wrapper { margin: 20px 0; }
-                    .item-id { font-size: 12px; color: #999; margin-top: 15px; }
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <h2>${safeItem.name}</h2>
-                    <p>${safeItem.category} - ${safeItem.location}</p>
-                    <div class="qr-wrapper">
-                        ${qrRef.current?.innerHTML || ''}
-                    </div>
-                    <p class="item-id">ID: ${safeItem.id}</p>
-                </div>
-                <script>window.onload = function() { window.print(); window.close(); }</script>
-            </body>
-            </html>
-        `);
-        printWindow.document.close();
+                textNode(doc, container, 'h2', item.name);
+                textNode(doc, container, 'p', `${item.category || ''} - ${item.location || ''}`);
+
+                const qrWrapper = doc.createElement('div');
+                qrWrapper.className = 'qr-wrapper';
+                if (svg) qrWrapper.appendChild(doc.importNode(svg, true));
+                container.appendChild(qrWrapper);
+
+                textNode(doc, container, 'p', `ID: ${item.id}`, 'item-id');
+            },
+        });
     };
 
     const handleDownload = () => {

@@ -1,8 +1,12 @@
+import logging
+
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
+from django.utils.crypto import constant_time_compare
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -74,7 +78,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         return User.Role.STUDENT
 
     def validate(self, attrs):
-        if attrs['password'] != attrs['password2']:
+        if not constant_time_compare(attrs['password'], attrs['password2']):
             raise serializers.ValidationError({'password': 'Passwords do not match.'})
         return attrs
 
@@ -146,7 +150,7 @@ class ChangePasswordSerializer(serializers.Serializer):
             tokens = OutstandingToken.objects.filter(user=user)
             for token in tokens:
                 BlacklistedToken.objects.get_or_create(token=token)
-        except Exception:
-            pass  # token_blacklist might not be fully configured — fail silently
+        except (ImportError, RuntimeError, AttributeError, ValueError) as exc:
+            logger.warning('Refresh-token blacklist skipped after password change: %s', exc)
 
         return user

@@ -9,7 +9,7 @@ import { exportCSV, exportPDF } from '../utils/exportUtils';
 import useUIStore from '../store/uiStore';
 import useAuthStore from '../store/authStore';
 import { resolveImageUrl } from '../utils/imageUtils';
-import { escapeHtml } from '../utils/htmlUtils';
+import { openPrintPage } from '../utils/printUtils';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { hasMinRole, ROLES } from '../utils/roles';
 import {
@@ -317,66 +317,60 @@ const Inventory = () => {
 
     // Print inventory
     const handlePrint = () => {
-        const safeStats = {
-            total: escapeHtml(stats.total),
-            available: escapeHtml(stats.available),
-            inUse: escapeHtml(stats.inUse),
-            maintenance: escapeHtml(stats.maintenance),
-        };
+        openPrintPage({
+            title: 'PLMun Inventory Report',
+            styles: `
+                body { font-family: Arial, sans-serif; padding: 20px; }
+                h1 { color: #1a1a1a; }
+                table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                th { background-color: #f5f5f5; }
+                .stats { display: flex; gap: 20px; margin-bottom: 20px; }
+                .stat { padding: 10px; background: #f5f5f5; border-radius: 8px; }
+            `,
+            buildBody: (doc, body, textNode) => {
+                textNode(doc, body, 'h1', 'PLMun Inventory Report');
+                textNode(doc, body, 'p', `Generated on: ${new Date().toLocaleString()}`);
 
-        const printContent = `
-            <html>
-            <head>
-                <title>PLMun Inventory Report</title>
-                <style>
-                    body { font-family: Arial, sans-serif; padding: 20px; }
-                    h1 { color: #1a1a1a; }
-                    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-                    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-                    th { background-color: #f5f5f5; }
-                    .stats { display: flex; gap: 20px; margin-bottom: 20px; }
-                    .stat { padding: 10px; background: #f5f5f5; border-radius: 8px; }
-                </style>
-            </head>
-            <body>
-                <h1>PLMun Inventory Report</h1>
-                <p>Generated on: ${escapeHtml(new Date().toLocaleString())}</p>
-                <div class="stats">
-                    <div class="stat"><strong>Total:</strong> ${safeStats.total}</div>
-                    <div class="stat"><strong>Available:</strong> ${safeStats.available}</div>
-                    <div class="stat"><strong>In Use:</strong> ${safeStats.inUse}</div>
-                    <div class="stat"><strong>Maintenance:</strong> ${safeStats.maintenance}</div>
-                </div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Name</th>
-                            <th>Category</th>
-                            <th>Quantity</th>
-                            <th>Status</th>
-                            <th>Location</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${inventory.map(item => `
-                            <tr>
-                                <td>${escapeHtml(item.name)}</td>
-                                <td>${escapeHtml(item.category)}</td>
-                                <td>${escapeHtml(item.quantity)}</td>
-                                <td>${escapeHtml(item.status)}</td>
-                                <td>${escapeHtml(item.location)}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            </body>
-            </html>
-        `;
+                const statsWrap = doc.createElement('div');
+                statsWrap.className = 'stats';
+                [
+                    ['Total', stats.total],
+                    ['Available', stats.available],
+                    ['In Use', stats.inUse],
+                    ['Maintenance', stats.maintenance],
+                ].forEach(([label, value]) => {
+                    const stat = doc.createElement('div');
+                    stat.className = 'stat';
+                    const strong = doc.createElement('strong');
+                    strong.textContent = `${label}: `;
+                    stat.appendChild(strong);
+                    stat.appendChild(doc.createTextNode(String(value ?? 0)));
+                    statsWrap.appendChild(stat);
+                });
+                body.appendChild(statsWrap);
 
-        const printWindow = window.open('', '_blank');
-        printWindow.document.write(printContent);
-        printWindow.document.close();
-        printWindow.print();
+                const table = doc.createElement('table');
+                const thead = doc.createElement('thead');
+                const headRow = doc.createElement('tr');
+                ['Name', 'Category', 'Quantity', 'Status', 'Location'].forEach((heading) => {
+                    textNode(doc, headRow, 'th', heading);
+                });
+                thead.appendChild(headRow);
+                table.appendChild(thead);
+
+                const tbody = doc.createElement('tbody');
+                inventory.forEach((item) => {
+                    const row = doc.createElement('tr');
+                    [item.name, item.category, item.quantity, item.status, item.location].forEach((value) => {
+                        textNode(doc, row, 'td', value);
+                    });
+                    tbody.appendChild(row);
+                });
+                table.appendChild(tbody);
+                body.appendChild(table);
+            },
+        });
     };
 
     return (

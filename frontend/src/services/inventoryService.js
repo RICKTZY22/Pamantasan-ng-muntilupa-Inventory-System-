@@ -1,11 +1,28 @@
 import api from './api';
 import { fetchAllPages } from './pagination';
 
+const ITEM_FORM_FIELDS = [
+    'name',
+    'brand',
+    'category',
+    'quantity',
+    'status',
+    'location',
+    'description',
+    'imageUrl',
+    'accessLevel',
+    'isReturnable',
+    'priority',
+    'borrowDuration',
+    'borrowDurationUnit',
+];
+
 // Build multipart FormData from a payload, skipping null/undefined/empty values.
 // Used when an item has a File field (e.g., image upload) — falls back to JSON otherwise.
 const buildFormData = (payload) => {
     const formData = new FormData();
-    Object.entries(payload).forEach(([key, value]) => {
+    ITEM_FORM_FIELDS.forEach((key) => {
+        const value = payload[key];
         if (value !== null && value !== undefined && value !== '') {
             formData.append(key, value);
         }
@@ -16,13 +33,15 @@ const buildFormData = (payload) => {
 const hasFileField = (payload) => Object.values(payload).some(v => v instanceof File);
 
 const submitInventory = async (method, url, payload) => {
+    const request = method === 'post' ? api.post : method === 'put' ? api.put : null;
+    if (!request) throw new Error('Unsupported inventory request method.');
     if (hasFileField(payload)) {
-        const response = await api[method](url, buildFormData(payload), {
+        const response = await request(url, buildFormData(payload), {
             headers: { 'Content-Type': 'multipart/form-data' },
         });
         return response.data;
     }
-    const response = await api[method](url, payload);
+    const response = await request(url, payload);
     return response.data;
 };
 

@@ -21,7 +21,7 @@ import plmunGraduation from '../assets/images/plmun-graduation.png';
 const MAX_ATTEMPTS = 5;
 const LOCKOUT_TIERS = [30_000, 60_000, 300_000, 1_800_000, 3_600_000];
 const SESSION_KEY = 'plmun_login_guard';
-const DEMO_PASSWORD = import.meta.env.VITE_DEMO_PASSWORD || 'demo_pass_2026';
+const DEMO_PASSWORD = import.meta.env.VITE_DEMO_PASSWORD || '';
 
 const readGuard = () => {
     try { return JSON.parse(sessionStorage.getItem(SESSION_KEY) || '{}'); }
@@ -316,24 +316,22 @@ const Login = () => {
                                 </div>
                             </form>
 
-                            {/* Demo credentials hint — only rendered when VITE_DEMO_MODE=true.
-                                Lets reviewers try the app without registering. Click any role
-                                to autofill the form, then hit Sign In. */}
+                            {/* Demo credentials hint — only rendered when VITE_DEMO_MODE=true. */}
                             {import.meta.env.VITE_DEMO_MODE === 'true' && (
                                 <div className="mt-5 rounded-lg border border-amber-400/30 bg-amber-50/60 dark:bg-amber-500/[0.06] p-3">
                                     <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400 mb-2 flex items-center gap-1.5">
                                         <Sparkles size={12} />
-                                        Demo Accounts — click to autofill
+                                        Demo Accounts — click to fill email
                                     </p>
                                     <div className="grid grid-cols-2 gap-1.5">
                                         {DEMO_ACCOUNTS.map((acct) => (
                                             <button
                                                 key={acct.label}
                                                 type="button"
-                                                onClick={() => setFormData({
+                                                onClick={() => setFormData((current) => ({
                                                     email: acct.email,
-                                                    password: DEMO_PASSWORD,
-                                                })}
+                                                    password: DEMO_PASSWORD || current.password,
+                                                }))}
                                                 className="text-xs font-medium py-1.5 px-2 rounded bg-white/70 dark:bg-white/5 hover:bg-white dark:hover:bg-white/10 border border-amber-400/20 text-gray-700 dark:text-gray-300 transition-colors"
                                             >
                                                 {acct.label}

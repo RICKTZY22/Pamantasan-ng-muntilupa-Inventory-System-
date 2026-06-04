@@ -84,7 +84,7 @@ api.interceptors.response.use(
                 // Refresh cookie gone/expired → full logout.
                 const store = await getAuthStore();
                 store.getState().logout();
-                window.location.href = '/login';
+                window.location.assign('/login');
                 throw refreshError;
             } finally {
                 isRefreshing = false;

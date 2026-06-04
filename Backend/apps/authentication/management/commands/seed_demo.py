@@ -17,6 +17,7 @@ Run with:
 """
 from datetime import timedelta
 import os
+import secrets
 
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
@@ -29,7 +30,6 @@ from apps.requests.models import Request
 User = get_user_model()
 
 
-DEFAULT_DEMO_PASSWORD = 'demo_pass_2026'
 DEMO_PASSWORD_ENV = 'DEMO_PASSWORD'
 
 DEMO_USERS = [
@@ -104,8 +104,7 @@ class Command(BaseCommand):
 
     @transaction.atomic
     def handle(self, *args, **options):
-        # Demo-only fallback for reviewers; override via env for real deployments.
-        demo_password = os.environ.get(DEMO_PASSWORD_ENV, DEFAULT_DEMO_PASSWORD)
+        demo_password = os.environ.get(DEMO_PASSWORD_ENV) or secrets.token_urlsafe(12)
 
         if options['reset']:
             self._reset()
@@ -146,7 +145,9 @@ class Command(BaseCommand):
                 user.save(update_fields=['password'])
                 self.stdout.write(self.style.SUCCESS(f'  + user {user.username} ({user.role})'))
             else:
-                self.stdout.write(f'  ~ user {user.username} already exists, skipping')
+                user.set_password(demo_password)
+                user.save(update_fields=['password'])
+                self.stdout.write(f'  ~ user {user.username} already exists, password refreshed')
             users[spec['role']] = user
         return users
 

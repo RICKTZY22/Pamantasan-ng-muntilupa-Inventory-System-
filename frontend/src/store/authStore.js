@@ -23,7 +23,7 @@ const startIdleTimer = (logoutFn, ms = IDLE_TIMEOUT_MS) => {
     idleRemainingMs = ms;
     idleTimer = setTimeout(() => {
         logoutFn();
-        window.location.href = '/login';
+        window.location.assign('/login');
     }, ms);
 };
 
@@ -49,7 +49,7 @@ const attachIdleListeners = (logoutFn) => {
             // Tab visible: resume with remaining time, or logout if expired.
             if (idleRemainingMs <= 0) {
                 logoutFn();
-                window.location.href = '/login';
+                window.location.assign('/login');
             } else {
                 startIdleTimer(logoutFn, idleRemainingMs);
             }
@@ -154,7 +154,7 @@ const useAuthStore = create(
 
                     if (isDeactivated) {
                         set({ isLoading: false });
-                        window.location.href = '/deactivated';
+                        window.location.assign('/deactivated');
                         return { success: false, error: 'Account deactivated' };
                     }
 
@@ -280,7 +280,7 @@ const useAuthStore = create(
                     // if account was deactivated, redirect to deactivated page
                     if (mapped.isActive === false) {
                         get().logout();
-                        window.location.href = '/deactivated';
+                        window.location.assign('/deactivated');
                     }
                 } catch {
                     // Background check only; retry on the next interval.

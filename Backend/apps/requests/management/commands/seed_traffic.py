@@ -8,12 +8,14 @@ All seeded rows are tagged so --clear can remove them cleanly:
   - students: username starts with 'seed_student_'
   - requests: purpose starts with '[SEED]'
   - fallback items (only created if inventory was empty): name starts with '[SEED]'
-Seeded students share the password 'seedpass123' so you can log in as any of them.
+Set SEED_TRAFFIC_PASSWORD to choose the login password. If it is omitted, the
+command generates one and prints it at the end.
 NOTE: this inserts requests directly (bulk), so it does NOT decrement item stock —
 it's test data for volume/perf, not a simulation of the real approve flow.
 """
 
-import random
+import os
+import secrets
 import time
 
 from django.contrib.auth import get_user_model
@@ -29,7 +31,8 @@ User = get_user_model()
 
 SEED_USER_PREFIX = 'seed_student_'
 SEED_REQUEST_TAG = '[SEED]'
-SEED_PASSWORD = 'seedpass123'
+SEED_PASSWORD_ENV = 'SEED_TRAFFIC_PASSWORD'
+RNG = secrets.SystemRandom()
 
 # (status, weight). APPROVED entries may be backdated into overdue territory.
 STATUS_WEIGHTS = [
@@ -55,6 +58,7 @@ class Command(BaseCommand):
         n_students = opts['students']
         n_requests = opts['requests']
         started = time.monotonic()
+        seed_password = os.environ.get(SEED_PASSWORD_ENV) or secrets.token_urlsafe(12)
 
         # ── Items to borrow against ──
         items = list(Item.objects.all()[:100])
@@ -65,7 +69,7 @@ class Command(BaseCommand):
         # ── Students (bulk, one shared password hash for speed) ──
         existing = set(User.objects.filter(username__startswith=SEED_USER_PREFIX)
                        .values_list('username', flat=True))
-        pwd = make_password(SEED_PASSWORD)
+        pwd = make_password(seed_password)
         new_users = []
         for i in range(1, n_students + 1):
             uname = f'{SEED_USER_PREFIX}{i:05d}'
@@ -77,10 +81,11 @@ class Command(BaseCommand):
                 first_name='Seed', last_name=f'Student {i:05d}',
                 role='STUDENT', password=pwd,
                 student_id=f'2026-{i:05d}',
-                department=random.choice(DEPARTMENTS),
+                department=RNG.choice(DEPARTMENTS),
             ))
         if new_users:
             User.objects.bulk_create(new_users, batch_size=500, ignore_conflicts=True)
+        User.objects.filter(username__startswith=SEED_USER_PREFIX).update(password=pwd)
         students = list(User.objects.filter(username__startswith=SEED_USER_PREFIX))
         self.stdout.write(f'  Students: {len(students)} total ({len(new_users)} new).')
 
@@ -90,23 +95,23 @@ class Command(BaseCommand):
         now = timezone.now()
         reqs = []
         for _ in range(n_requests):
-            student = random.choice(students)
-            item = random.choice(items)
-            status = random.choices(statuses, weights=weights, k=1)[0]
+            student = RNG.choice(students)
+            item = RNG.choice(items)
+            status = RNG.choices(statuses, weights=weights, k=1)[0]
             req = Request(
                 item=item, item_name=item.name, requested_by=student,
-                quantity=random.randint(1, 3),
-                purpose=f'{SEED_REQUEST_TAG} {random.choice(PURPOSES)}',
+                quantity=RNG.randint(1, 3),
+                purpose=f'{SEED_REQUEST_TAG} {RNG.choice(PURPOSES)}',
                 status=status, priority=item.priority,
             )
             if status in ('APPROVED', 'COMPLETED', 'RETURNED'):
-                req.approved_at = now - timedelta(days=random.randint(0, 20))
+                req.approved_at = now - timedelta(days=RNG.randint(0, 20))
                 if status == 'APPROVED':
                     # ~40% overdue (due in the past), rest due soon.
-                    days = -random.randint(1, 10) if random.random() < 0.4 else random.randint(1, 14)
+                    days = -RNG.randint(1, 10) if RNG.random() < 0.4 else RNG.randint(1, 14)
                     req.expected_return = now + timedelta(days=days)
                 if status == 'RETURNED':
-                    req.returned_at = now - timedelta(days=random.randint(0, 10))
+                    req.returned_at = now - timedelta(days=RNG.randint(0, 10))
             reqs.append(req)
         Request.objects.bulk_create(reqs, batch_size=1000)
 
@@ -116,14 +121,14 @@ class Command(BaseCommand):
         ).count()
         self.stdout.write(self.style.SUCCESS(
             f'Seeded {len(reqs)} requests across {len(students)} students in {elapsed:.1f}s '
-            f'(~{overdue} overdue). Login as any: <username> / {SEED_PASSWORD}'
+            f'(~{overdue} overdue). Login as any: <username> / {seed_password}'
         ))
 
     def _make_fallback_items(self):
         cats = ['ELECTRONICS', 'FURNITURE', 'EQUIPMENT', 'SUPPLIES', 'OTHER']
         items = [
-            Item(name=f'{SEED_REQUEST_TAG} Test Item {i:02d}', category=random.choice(cats),
-                 quantity=random.randint(5, 50), status='AVAILABLE', access_level='STUDENT',
+            Item(name=f'{SEED_REQUEST_TAG} Test Item {i:02d}', category=RNG.choice(cats),
+                 quantity=RNG.randint(5, 50), status='AVAILABLE', access_level='STUDENT',
                  is_returnable=True, priority='MEDIUM')
             for i in range(1, 11)
         ]
