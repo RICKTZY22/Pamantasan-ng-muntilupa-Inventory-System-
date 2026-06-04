@@ -140,7 +140,7 @@ REST_FRAMEWORK = {
 # ===== JWT Settings =====
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),  # shortened from 7 days
+    'REFRESH_TOKEN_LIFETIME': timedelta(hours=1),  # 1h session (matches access)
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
@@ -188,6 +188,19 @@ CORS_ALLOW_HEADERS = [
     'x-csrftoken',
     'x-requested-with',
 ]
+
+if not DEBUG:
+    CSP_POLICY = {
+        'default-src': ["'self'"],
+        'script-src': ["'self'"],
+        'style-src': ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        'font-src': ["'self'", 'https://fonts.gstatic.com'],
+        'img-src': ["'self'", 'data:'],
+        'connect-src': ["'self'"],
+        'frame-ancestors': ["'none'"],
+        'base-uri': ["'self'"],
+        'form-action': ["'self'"],
+    }
 
 
 # ===== API Documentation =====
@@ -278,6 +291,11 @@ GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
 # is the sweet spot for responsive replies. num_ctx caps the prompt window so
 # the KV cache also fits in VRAM.
 OLLAMA_BASE_URL = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')
+OLLAMA_ALLOWED_HOSTS = [
+    host.strip().lower()
+    for host in os.environ.get('OLLAMA_ALLOWED_HOSTS', 'localhost,127.0.0.1,::1').split(',')
+    if host.strip()
+]
 OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'qwen2.5:7b-instruct')
 OLLAMA_NUM_CTX = int(os.environ.get('OLLAMA_NUM_CTX', '4096'))
 # Hard cap (seconds) on the assistant HTTP call so a hung model can't tie up a worker.

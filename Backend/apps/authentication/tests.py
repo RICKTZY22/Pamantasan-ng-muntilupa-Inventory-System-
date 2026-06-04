@@ -9,6 +9,7 @@ from PIL import Image as PILImage
 from rest_framework import status
 from rest_framework.test import APITestCase, APIClient
 
+from apps.authentication.models import AuditLog
 
 User = get_user_model()
 
@@ -208,3 +209,60 @@ class AvatarUploadTests(APITestCase):
         bad = SimpleUploadedFile('me.png', b'not really an image', content_type='image/png')
         response = self.client.post('/api/auth/profile/picture/', {'avatar': bad}, format='multipart')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class AuditLogViewTests(APITestCase):
+    """Staff+ can read; the default view shows only login/logout + approve/reject
+    (other recorded actions are hidden but queryable); rows are enriched; clearing
+    is admin-only."""
+
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username='auditadmin', email='auditadmin@plmun.edu.ph',
+            password='StrongPass123!', role=User.Role.ADMIN, first_name='Aud', last_name='Min',
+        )
+        self.staff = User.objects.create_user(
+            username='auditstaff', email='auditstaff@plmun.edu.ph',
+            password='StrongPass123!', role=User.Role.STAFF,
+        )
+        self.student = User.objects.create_user(
+            username='auditstudent', email='auditstudent@plmun.edu.ph',
+            password='StrongPass123!', role=User.Role.STUDENT,
+        )
+        AuditLog.objects.create(action=AuditLog.LOGIN, user=self.student, username=self.student.username, details='login')
+        AuditLog.objects.create(action=AuditLog.LOGOUT, user=self.student, username=self.student.username, details='logout')
+        AuditLog.objects.create(action=AuditLog.REQUEST_APPROVED, user=self.staff, username=self.staff.username, details='Approved request #1')
+        AuditLog.objects.create(action=AuditLog.PROFILE_UPDATE, user=self.student, username=self.student.username, details='profile')
+        AuditLog.objects.create(action=AuditLog.LOGIN_FAILED, username='ghost', details='bad creds')
+
+    def test_staff_can_list_and_default_hides_noise(self):
+        self.client.force_authenticate(self.staff)
+        resp = self.client.get('/api/auth/audit-logs/')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        actions = {row['action'] for row in resp.data}
+        self.assertLessEqual(actions, {AuditLog.LOGIN, AuditLog.LOGOUT, AuditLog.REQUEST_APPROVED, AuditLog.REQUEST_REJECTED})
+        self.assertNotIn(AuditLog.PROFILE_UPDATE, actions)
+        self.assertNotIn(AuditLog.LOGIN_FAILED, actions)
+
+    def test_rows_are_enriched(self):
+        self.client.force_authenticate(self.admin)
+        resp = self.client.get('/api/auth/audit-logs/')
+        self.assertTrue(resp.data)
+        for key in ('name', 'email', 'avatar', 'user', 'action', 'timestamp'):
+            self.assertIn(key, resp.data[0])
+
+    def test_action_filter_exposes_hidden(self):
+        self.client.force_authenticate(self.staff)
+        resp = self.client.get('/api/auth/audit-logs/', {'action': 'Login Failed'})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(resp.data), 1)
+
+    def test_student_cannot_list(self):
+        self.client.force_authenticate(self.student)
+        self.assertEqual(self.client.get('/api/auth/audit-logs/').status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_clear_is_admin_only(self):
+        self.client.force_authenticate(self.staff)
+        self.assertEqual(self.client.delete('/api/auth/audit-logs/').status_code, status.HTTP_403_FORBIDDEN)
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.client.delete('/api/auth/audit-logs/').status_code, status.HTTP_200_OK)

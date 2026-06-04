@@ -364,11 +364,15 @@ const Requests = () => {
             purpose: formData.purpose,
         };
         const res = await createRequest(payload);
-        setIsModalOpen(false);
-        setFormData({ itemName: '', item: null, quantity: savedPrefs.defaultQuantity || 1, purpose: savedPrefs.defaultPurpose || '' });
-        setItemSearch('');
-        setSelectedItem(null);
-        if (res?.success) reload();
+        if (res?.success) {
+            setIsModalOpen(false);
+            setFormData({ itemName: '', item: null, quantity: savedPrefs.defaultQuantity || 1, purpose: savedPrefs.defaultPurpose || '' });
+            setItemSearch('');
+            setSelectedItem(null);
+            reload();
+        } else {
+            setFormError(res?.error || 'Failed to submit request');
+        }
     };
 
     const handleCancelClick = (id) => {
@@ -572,7 +576,7 @@ const Requests = () => {
                                     setShowDropdown(true);
                                     if (!e.target.value) {
                                         setSelectedItem(null);
-                                        setFormData({ ...formData, itemName: '', itemId: null });
+                                        setFormData({ ...formData, itemName: '', item: null });
                                     }
                                 }}
                                 onFocus={() => setShowDropdown(true)}
@@ -623,7 +627,7 @@ const Requests = () => {
                                     onClick={() => {
                                         setSelectedItem(null);
                                         setItemSearch('');
-                                        setFormData({ ...formData, itemName: '', itemId: null });
+                                        setFormData({ ...formData, itemName: '', item: null });
                                     }}
                                     className="ml-auto text-emerald-600 hover:text-emerald-800"
                                 >

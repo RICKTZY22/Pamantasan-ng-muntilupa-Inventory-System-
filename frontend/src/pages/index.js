@@ -7,4 +7,5 @@ export { default as Login } from './Login';
 export { default as Register } from './Register';
 export { default as Settings } from './Settings';
 export { default as Users } from './Users';
+export { default as AuditLogs } from './AuditLogs';
 export { default as AccountDeactivated } from './AccountDeactivated';

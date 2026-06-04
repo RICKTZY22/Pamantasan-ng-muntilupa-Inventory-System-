@@ -1,5 +1,6 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from apps.common.uploads import avatar_upload_path
 
 class User(AbstractUser):
     """Custom user model with app roles and profile metadata."""
@@ -18,7 +19,7 @@ class User(AbstractUser):
     )
     department = models.CharField(max_length=100, blank=True)
     student_id = models.CharField(max_length=20, blank=True)
-    avatar = models.ImageField(upload_to='avatars/', null=True, blank=True)
+    avatar = models.ImageField(upload_to=avatar_upload_path, null=True, blank=True)
     phone = models.CharField(max_length=20, blank=True)
     is_flagged = models.BooleanField(default=False, help_text='Flagged for overdue returns')
     overdue_count = models.PositiveIntegerField(default=0, help_text='Lifetime overdue incidents (never reset)')

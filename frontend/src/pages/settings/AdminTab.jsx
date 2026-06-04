@@ -1,26 +1,30 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
-    Shield, Clock, DownloadSimple as Download, ClockCounterClockwise as History,
-    Printer, Trash as Trash2, FloppyDisk as Save, ArrowsClockwise, UserPlus,
+    Shield, Clock, DownloadSimple as Download,
+    FloppyDisk as Save, ArrowsClockwise, UserPlus,
     Envelope, HardDrives, Database, Broom, Info, CheckCircle, Warning,
 } from '@phosphor-icons/react';
-import { Button, Toggle, Table } from '../../components/ui';
+import { Button, Toggle } from '../../components/ui';
 import { SettingsGroup, SettingCard } from '../../components/settings';
 import { AdminOnly } from '../../components/auth';
 import api from '../../services/api';
 import { exportCSV } from '../../utils/exportUtils';
 
-const MaintenanceStatus = () => {
+const MaintenanceStatus = ({ endTime }) => {
     const [remaining, setRemaining] = useState(null);
 
     useEffect(() => {
-        api.get('/auth/maintenance/').then(res => {
-            if (res.data.enabled && res.data.endTime > Date.now()) {
-                const mins = Math.ceil((res.data.endTime - Date.now()) / 60000);
-                setRemaining(mins);
+        const tick = () => {
+            if (endTime && endTime > Date.now()) {
+                setRemaining(Math.ceil((endTime - Date.now()) / 60000));
+            } else {
+                setRemaining(null);
             }
-        }).catch(() => { });
-    }, []);
+        };
+        tick();
+        const id = setInterval(tick, 60000);
+        return () => clearInterval(id);
+    }, [endTime]);
 
     if (!remaining) return null;
 
@@ -34,37 +38,54 @@ const MaintenanceStatus = () => {
     );
 };
 
-const ACTION_COLORS = [
-    ['Login Failed', 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'],
-    ['Login', 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'],
-    ['Register', 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300'],
-    ['Created', 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'],
-    ['Approved', 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'],
-    ['Changed', 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'],
-    ['Update', 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'],
-    ['Deleted', 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'],
-    ['Rejected', 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'],
-];
-
-const actionColorClass = (action) =>
-    ACTION_COLORS.find(([k]) => action.includes(k))?.[1]
-    || 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300';
-
 const AdminTab = ({
     adminSettings, setAdminSettings, flashMessage,
     saveSettings, adminPrefsKey,
-    auditLogs, auditLogsLoading, fetchAuditLogs,
-    handleClearAuditLogs, handleExportAuditLogs, handleBackupNow, backupLoading,
-    clearLogsConfirm, setClearLogsConfirm,
+    handleBackupNow, backupLoading,
 }) => {
     const env = import.meta.env.MODE || 'development';
     const [userCount, setUserCount] = useState(null);
+    const [maintenanceEndTime, setMaintenanceEndTime] = useState(0);
+
+    const applyMaintenanceState = useCallback((data) => {
+        const enabled = Boolean(data?.enabled && data?.endTime > Date.now());
+        setMaintenanceEndTime(enabled ? data.endTime : 0);
+        setAdminSettings(prev => ({ ...prev, maintenanceMode: enabled }));
+    }, [setAdminSettings]);
+
+    const refreshMaintenance = useCallback(async () => {
+        try {
+            const { data } = await api.get('/auth/maintenance/');
+            applyMaintenanceState(data);
+        } catch {
+            return;
+        }
+    }, [applyMaintenanceState]);
+
+    const updateMaintenance = useCallback(async (enabled, durationMins = 30, label = '30 min') => {
+        setAdminSettings(prev => ({ ...prev, maintenanceMode: enabled }));
+        try {
+            const payload = enabled ? { enabled: true, durationMins } : { enabled: false };
+            const { data } = await api.post('/auth/maintenance/', payload);
+            applyMaintenanceState(data);
+            flashMessage(enabled
+                ? `Maintenance mode enabled for ${label}. Students & Faculty are now blocked.`
+                : 'Maintenance mode disabled.', 5000);
+        } catch {
+            flashMessage(enabled ? 'Error: Failed to enable maintenance mode.' : 'Error: Failed to disable maintenance mode.', 5000);
+            refreshMaintenance();
+        }
+    }, [applyMaintenanceState, flashMessage, refreshMaintenance, setAdminSettings]);
 
     // Self-source the user count (System info) so this tab no longer depends
     // on the Settings page wiring user-management state.
     useEffect(() => {
         api.get('/users/stats/').then(res => setUserCount(res.data?.total ?? null)).catch(() => { });
     }, []);
+
+    useEffect(() => {
+        refreshMaintenance();
+    }, [refreshMaintenance]);
 
     return (
         <AdminOnly showAccessDenied>
@@ -78,15 +99,7 @@ const AdminTab = ({
                             <Toggle
                                 checked={adminSettings.maintenanceMode}
                                 aria-label="Maintenance mode"
-                                onChange={async (enabled) => {
-                                    setAdminSettings({ ...adminSettings, maintenanceMode: enabled });
-                                    if (!enabled) {
-                                        try {
-                                            await api.post('/auth/maintenance/', { enabled: false });
-                                            flashMessage('✓ Maintenance mode disabled.');
-                                        } catch { flashMessage('✗ Failed to disable maintenance mode.'); }
-                                    }
-                                }}
+                                onChange={(enabled) => updateMaintenance(enabled)}
                             />
                         }
                     />
@@ -110,12 +123,7 @@ const AdminTab = ({
                                         <button
                                             key={opt.mins}
                                             type="button"
-                                            onClick={async () => {
-                                                try {
-                                                    await api.post('/auth/maintenance/', { enabled: true, durationMins: opt.mins });
-                                                    flashMessage(`✓ Maintenance mode enabled for ${opt.label}. Students & Faculty are now blocked.`, 5000);
-                                                } catch { flashMessage('✗ Failed to enable maintenance mode.'); }
-                                            }}
+                                            onClick={() => updateMaintenance(true, opt.mins, opt.label)}
                                             className="px-3 py-1.5 text-sm rounded-lg bg-amber-100 dark:bg-amber-800/40 text-amber-800 dark:text-amber-200 hover:bg-amber-200 dark:hover:bg-amber-700/40 transition-colors font-medium"
                                         >
                                             {opt.label}
@@ -133,18 +141,15 @@ const AdminTab = ({
                                             if (e.key === 'Enter') {
                                                 const mins = parseInt(e.target.value, 10);
                                                 if (mins > 0) {
-                                                    try {
-                                                        await api.post('/auth/maintenance/', { enabled: true, durationMins: mins });
-                                                        flashMessage(`✓ Maintenance mode enabled for ${mins} minute(s).`, 5000);
-                                                        e.target.value = '';
-                                                    } catch { flashMessage('✗ Failed to enable maintenance mode.'); }
+                                                    updateMaintenance(true, mins, `${mins} minute(s)`);
+                                                    e.target.value = '';
                                                 }
                                             }
                                         }}
                                     />
                                     <span className="text-xs text-gray-500 dark:text-gray-400">Press Enter to set</span>
                                 </div>
-                                <MaintenanceStatus />
+                                <MaintenanceStatus endTime={maintenanceEndTime} />
                             </div>
                         </SettingCard>
                     )}
@@ -230,64 +235,6 @@ const AdminTab = ({
                         title="Restoring a backup"
                         description="Import the JSON file through the Django admin panel or contact your system administrator"
                     />
-                </SettingsGroup>
-
-                <SettingsGroup icon={History} title="Audit logs" description="Track sensitive actions across the system">
-                    <SettingCard
-                        icon={History}
-                        title={`Recent activity${auditLogs.length ? ` (${auditLogs.length}${auditLogs.length >= 200 ? ', latest 200' : ''})` : ''}`}
-                        description="Filtered to the most recent entries"
-                        expandable
-                        defaultOpen
-                    >
-                        <div className="space-y-3">
-                            {auditLogsLoading ? (
-                                <div className="py-10 text-center rounded-lg border border-gray-200 dark:border-gray-700/60">
-                                    <span className="inline-block w-6 h-6 border-2 border-accent/30 border-t-accent rounded-full animate-spin mb-2" />
-                                    <p className="text-sm text-gray-400">Loading audit logs…</p>
-                                </div>
-                            ) : (
-                                <Table>
-                                    <Table.Header>
-                                        <Table.Row>
-                                            <Table.Head>Action</Table.Head>
-                                            <Table.Head>User</Table.Head>
-                                            <Table.Head>Details</Table.Head>
-                                            <Table.Head>Timestamp</Table.Head>
-                                        </Table.Row>
-                                    </Table.Header>
-                                    <Table.Body>
-                                        {auditLogs.length === 0 ? (
-                                            <Table.Empty colSpan={4} message="No audit log entries yet." />
-                                        ) : auditLogs.map((log) => (
-                                            <Table.Row key={log.id}>
-                                                <Table.Cell>
-                                                    <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${actionColorClass(log.action)}`}>{log.action}</span>
-                                                </Table.Cell>
-                                                <Table.Cell className="font-medium text-gray-700 dark:text-gray-300">{log.user || '—'}</Table.Cell>
-                                                <Table.Cell>{log.details || '—'}</Table.Cell>
-                                                <Table.Cell className="text-xs whitespace-nowrap text-gray-500 dark:text-gray-500">
-                                                    {new Date(log.timestamp).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}
-                                                </Table.Cell>
-                                            </Table.Row>
-                                        ))}
-                                    </Table.Body>
-                                </Table>
-                            )}
-                            <div className="flex flex-wrap justify-end gap-2">
-                                <Button variant="ghost" size="sm" icon={ArrowsClockwise} onClick={fetchAuditLogs}>Refresh</Button>
-                                <Button variant="ghost" size="sm" icon={Printer} onClick={handleExportAuditLogs} disabled={auditLogs.length === 0}>Print / Export</Button>
-                                {clearLogsConfirm ? (
-                                    <div className="flex items-center gap-1">
-                                        <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20" onClick={handleClearAuditLogs}>Confirm clear</Button>
-                                        <Button variant="ghost" size="sm" onClick={() => setClearLogsConfirm(false)}>Cancel</Button>
-                                    </div>
-                                ) : (
-                                    <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20" icon={Trash2} onClick={() => setClearLogsConfirm(true)} disabled={auditLogs.length === 0}>Clear logs</Button>
-                                )}
-                            </div>
-                        </div>
-                    </SettingCard>
                 </SettingsGroup>
 
                 <SettingsGroup icon={Info} title="System information">

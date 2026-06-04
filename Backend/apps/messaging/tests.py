@@ -8,6 +8,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from apps.messaging.consumers import ChatConsumer
+from apps.messaging.middleware import _token_from_scope
 
 from apps.inventory.models import Item
 from apps.requests.models import Request
@@ -21,6 +22,16 @@ User = get_user_model()
 
 class ConsumerResilienceTests(TestCase):
     """A malformed client frame or a failing handler must not crash the consumer."""
+
+    def test_token_can_come_from_websocket_subprotocol(self):
+        scope = {'subprotocols': ['plmun.jwt', 'access-token-value'], 'query_string': b''}
+
+        self.assertEqual(_token_from_scope(scope), 'access-token-value')
+
+    def test_token_query_param_still_works_for_old_clients(self):
+        scope = {'subprotocols': [], 'query_string': b'token=legacy-token-value'}
+
+        self.assertEqual(_token_from_scope(scope), 'legacy-token-value')
 
     def test_receive_json_swallows_handler_exceptions(self):
         consumer = ChatConsumer()

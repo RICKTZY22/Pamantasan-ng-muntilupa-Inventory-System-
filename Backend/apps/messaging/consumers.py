@@ -37,7 +37,11 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         presence.mark_online(self.user.id)
         await self.channel_layer.group_add(self.group, self.channel_name)
         await self.channel_layer.group_add(PRESENCE_GROUP, self.channel_name)
-        await self.accept()
+        subprotocols = [
+            item.decode() if isinstance(item, bytes) else str(item)
+            for item in self.scope.get('subprotocols', [])
+        ]
+        await self.accept('plmun.jwt' if 'plmun.jwt' in subprotocols else None)
         await self.channel_layer.group_send(PRESENCE_GROUP, {'type': 'presence.event', 'userId': self.user.id, 'online': True})
 
     async def disconnect(self, code):

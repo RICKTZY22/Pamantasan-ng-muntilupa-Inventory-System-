@@ -15,7 +15,7 @@ services:
     runtime: python
     rootDir: Backend
     buildCommand: chmod +x build.sh && ./build.sh
-    startCommand: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT
+    startCommand: daphne -b 0.0.0.0 -p $PORT config.asgi:application
     envVars:
       - key: SECRET_KEY
         generateValue: true
@@ -29,6 +29,14 @@ services:
         value: ".onrender.com"
       - key: CORS_ORIGINS
         sync: false  # set this manually after creating the static site
+      - key: CSRF_TRUSTED_ORIGINS
+        sync: false  # set this to the deployed frontend origin
+      - key: REDIS_URL
+        sync: false  # required in production for WebSocket fanout/rate limits
+      - key: ASSISTANT_PROVIDER
+        value: "gemini"
+      - key: GEMINI_API_KEY
+        sync: false
       - key: PYTHON_VERSION
         value: "3.14"
 

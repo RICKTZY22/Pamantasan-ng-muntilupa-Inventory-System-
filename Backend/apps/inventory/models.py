@@ -1,6 +1,7 @@
 from django.db import models
 from django.conf import settings
 from datetime import timedelta
+from apps.common.uploads import item_upload_path
 
 
 class Item(models.Model):
@@ -48,7 +49,7 @@ class Item(models.Model):
     )
     location = models.CharField(max_length=100, blank=True, default='')
     description = models.TextField(blank=True)
-    image = models.ImageField(upload_to='items/', null=True, blank=True)
+    image = models.ImageField(upload_to=item_upload_path, null=True, blank=True)
     access_level = models.CharField(
         max_length=20,
         choices=AccessLevel.choices,

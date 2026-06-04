@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import {
     MagnifyingGlass as Search, ArrowLeft, PaperPlaneTilt as Send, Plus,
     Check, Checks, ChatCircle, Package, CircleNotch, X, Image as ImageIcon, Smiley,
-    AddressBook, Archive, Trash,
+    AddressBook, Archive, Trash, Warning,
 } from '@phosphor-icons/react';
 import { Avatar, Input, Button, Modal } from '../components/ui';
 import { useIsMobile } from '../hooks';
@@ -15,6 +15,7 @@ import { sendChat } from '../services/chatSocket';
 import { getRoleMeta } from '../components/users/roleMeta';
 import { resolveImageUrl } from '../utils/imageUtils';
 import { formatShortRelativeTime } from '../utils/timeUtils';
+import { formatApiError } from '../utils/errorUtils';
 
 const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
@@ -64,6 +65,7 @@ const Messages = () => {
     const [reactingId, setReactingId] = useState(null);  // message id whose emoji picker is open
     const [assistantSending, setAssistantSending] = useState(false);
     const [assistantError, setAssistantError] = useState('');
+    const [chatError, setChatError] = useState('');
     const scrollRef = useRef(null);
     const fileInputRef = useRef(null);
     const longPressRef = useRef(null);
@@ -83,21 +85,27 @@ const Messages = () => {
                 const rest = list.filter((c) => c.id !== assistantConv.id);
                 setConversations([assistantConv, ...rest]);
             })
-            .catch(() => {})
+            .catch((err) => {
+                if (alive) setChatError(formatApiError(err, 'Failed to load conversations.'));
+            })
             .finally(() => { if (alive) setLoadingList(false); });
         return () => { alive = false; };
     }, [setConversations]);
 
     // Referral from the Inventory page. Two entry points:
-    //  - referItem        → open the contact picker to send it to staff/admin.
-    //  - askAssistantItem → attach it to the PLMun Assistant thread to ask about it.
+    // referItem opens the contact picker; askAssistantItem opens the assistant.
     useEffect(() => {
         const refer = location.state?.referItem;
         const askItem = location.state?.askAssistantItem;
         if (refer) {
             setReferItem(refer);
             setNewOpen(true);
-            messageService.getContacts().then(setContacts).catch(() => setContacts([]));
+            messageService.getContacts()
+                .then(setContacts)
+                .catch((err) => {
+                    setContacts([]);
+                    setChatError(formatApiError(err, 'Failed to load contacts.'));
+                });
         } else if (askItem) {
             setPendingAssistantItem(askItem);
         }
@@ -107,12 +115,23 @@ const Messages = () => {
 
     useEffect(() => {
         if (tab !== 'contacts' || contacts !== null) return;
-        messageService.getContacts().then(setContacts).catch(() => setContacts([]));
+        messageService.getContacts()
+            .then(setContacts)
+            .catch((err) => {
+                setContacts([]);
+                setChatError(formatApiError(err, 'Failed to load contacts.'));
+            });
     }, [tab, contacts]);
 
     const active = conversations.find((c) => c.id === activeId);
     const thread = messages[activeId] || [];
     const activeIsAssistant = !!active?.isAssistant;
+    const conversationPreview = (msg) => ({
+        body: msg.body,
+        senderId: msg.senderId,
+        hasItem: !!msg.item,
+        createdAt: msg.createdAt,
+    });
 
     // Auto-scroll thread to bottom on new messages.
     useEffect(() => {
@@ -133,6 +152,7 @@ const Messages = () => {
     const handleDraftChange = (e) => {
         setDraft(e.target.value);
         if (assistantError) setAssistantError('');
+        if (chatError) setChatError('');
         if (activeIsAssistant) return;
         setTypingState(true);
         clearTimeout(typingTimerRef.current);
@@ -148,14 +168,17 @@ const Messages = () => {
     }, [activeId]);
 
     const openConversation = useCallback(async (id) => {
-        setActive(id);
         setAssistantError('');
+        setChatError('');
         setLoadingThread(true);
         try {
             const data = await messageService.getMessages(id);
+            setActive(id);
             setMessages(id, data.results || []);
             setHasMore(!!data.hasMore);
             messageService.markRead(id).catch(() => {}); // persists + broadcasts read receipt
+        } catch (err) {
+            setChatError(formatApiError(err, 'Failed to open conversation.'));
         } finally {
             setLoadingThread(false);
         }
@@ -167,7 +190,7 @@ const Messages = () => {
         if (!pendingAssistantItem || !conversations.length) return;
         // openConversation() below calls setActive(), a zustand update that
         // synchronously re-renders and re-fires this effect BEFORE React flushes
-        // setPendingAssistantItem(null) — so a state-only guard loops forever.
+        // setPendingAssistantItem(null), so a state-only guard loops forever.
         // A ref flips synchronously, blocking re-entry for this same item.
         if (handledAssistantItemRef.current === pendingAssistantItem) return;
         const assistantConv = conversations.find((c) => c.isAssistant);
@@ -180,14 +203,19 @@ const Messages = () => {
 
     const loadEarlier = async () => {
         if (!activeId || !thread.length) return;
-        const data = await messageService.getMessages(activeId, thread[0].id);
-        prependMessages(activeId, data.results || []);
-        setHasMore(!!data.hasMore);
+        try {
+            const data = await messageService.getMessages(activeId, thread[0].id);
+            prependMessages(activeId, data.results || []);
+            setHasMore(!!data.hasMore);
+        } catch (err) {
+            setChatError(formatApiError(err, 'Failed to load earlier messages.'));
+        }
     };
 
     const handleSend = async () => {
         const body = draft.trim();
         if ((!body && !referItem) || !activeId) return;
+        setChatError('');
         if (activeIsAssistant) {
             if (!body) return; // the assistant needs a typed question
             const attachedItem = referItem;
@@ -202,7 +230,7 @@ const Messages = () => {
             } catch (err) {
                 setDraft(body);
                 setReferItem(attachedItem);
-                setAssistantError(err.response?.data?.detail || 'Assistant is unavailable right now.');
+                setAssistantError(formatApiError(err, 'Assistant is unavailable right now.'));
             } finally {
                 setAssistantSending(false);
             }
@@ -211,14 +239,23 @@ const Messages = () => {
         const itemId = referItem?.id;
         setDraft('');
         setReferItem(null);
-        // Sending implies we're no longer typing — clear it so the recipient's
-        // indicator doesn't stick (an incoming message doesn't reset it).
+        // Sending means we are no longer typing; clear the recipient indicator.
         clearTimeout(typingTimerRef.current);
         setTypingState(false);
         const sent = sendChat({ type: 'message.send', conversationId: activeId, body, itemId });
         if (!sent) {
-            // socket down → REST fallback (still persists + broadcasts)
-            try { await messageService.sendMessage(activeId, body, itemId); } catch { setDraft(body); setReferItem(referItem); }
+            // Socket down: use REST fallback.
+            try {
+                const msg = await messageService.sendMessage(activeId, body, itemId);
+                setMessages(activeId, [...(messages[activeId] || []), msg]);
+                if (active) {
+                    upsertConversation({ ...active, lastMessage: conversationPreview(msg), updatedAt: msg.createdAt, unreadCount: 0 });
+                }
+            } catch (err) {
+                setDraft(body);
+                setReferItem(referItem);
+                setChatError(formatApiError(err, 'Failed to send message.'));
+            }
         }
     };
 
@@ -226,14 +263,27 @@ const Messages = () => {
         const file = e.target.files?.[0];
         e.target.value = '';
         if (!file || !activeId) return;
-        try { await messageService.sendAttachment(activeId, file, draft.trim()); setDraft(''); } catch { /* surfaced by reload */ }
+        setChatError('');
+        try {
+            const msg = await messageService.sendAttachment(activeId, file, draft.trim());
+            setMessages(activeId, [...(messages[activeId] || []), msg]);
+            if (active) {
+                upsertConversation({ ...active, lastMessage: conversationPreview(msg), updatedAt: msg.createdAt, unreadCount: 0 });
+            }
+            setDraft('');
+        } catch (err) {
+            setChatError(formatApiError(err, 'Failed to send attachment.'));
+        }
     };
 
     const handleReact = (messageId, emoji) => {
         setReactingId(null);
         if (!activeId) return;
         const sent = sendChat({ type: 'reaction.toggle', conversationId: activeId, messageId, emoji });
-        if (!sent) messageService.react(activeId, messageId, emoji).catch(() => {});
+        if (!sent) {
+            messageService.react(activeId, messageId, emoji)
+                .catch((err) => setChatError(formatApiError(err, 'Failed to update reaction.')));
+        }
     };
 
     // Mobile: press-and-hold a bubble (~450ms) to open its emoji picker.
@@ -246,7 +296,10 @@ const Messages = () => {
     const openItemPicker = async () => {
         setItemPickerOpen(true);
         if (!items) {
-            try { setItems(await inventoryService.getAll()); } catch { setItems([]); }
+            try { setItems(await inventoryService.getAll()); } catch (err) {
+                setItems([]);
+                setChatError(formatApiError(err, 'Failed to load inventory items.'));
+            }
         }
     };
     const pickItem = (it) => { setReferItem(it); setItemPickerOpen(false); };
@@ -268,7 +321,10 @@ const Messages = () => {
     const openNew = async () => {
         setNewOpen(true);
         if (!contacts) {
-            try { setContacts(await messageService.getContacts()); } catch { setContacts([]); }
+            try { setContacts(await messageService.getContacts()); } catch (err) {
+                setContacts([]);
+                setChatError(formatApiError(err, 'Failed to load contacts.'));
+            }
         }
     };
     const startWith = async (userId) => {
@@ -277,7 +333,9 @@ const Messages = () => {
             upsertConversation(conv);
             setNewOpen(false);
             openConversation(conv.id);
-        } catch { /* role gate / error */ }
+        } catch (err) {
+            setChatError(formatApiError(err, 'Failed to start conversation.'));
+        }
     };
 
     const archiveConversation = async (conversation, archived) => {
@@ -286,7 +344,9 @@ const Messages = () => {
             await messageService.archive(conversation.id, archived);
             setConversations(conversations.map((c) => (c.id === conversation.id ? { ...c, isArchived: archived } : c)));
             if (activeId === conversation.id) setActive(null);
-        } catch { /* keep current state */ }
+        } catch (err) {
+            setChatError(formatApiError(err, archived ? 'Failed to archive conversation.' : 'Failed to unarchive conversation.'));
+        }
     };
 
     const deleteConversation = async (conversation) => {
@@ -306,7 +366,9 @@ const Messages = () => {
             setConversations(conversations.filter((c) => c.id !== conversation.id));
             setMessages(conversation.id, []);
             if (activeId === conversation.id) setActive(null);
-        } catch { /* keep current state */ }
+        } catch (err) {
+            setChatError(formatApiError(err, conversation.isAssistant ? 'Failed to clear assistant history.' : 'Failed to delete conversation.'));
+        }
     };
 
     const filtered = useMemo(() => {
@@ -325,6 +387,15 @@ const Messages = () => {
     return (
         <div className="space-y-4">
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Messages</h1>
+            {chatError && (
+                <div role="alert" className="flex items-center gap-2 px-3 py-2 rounded-lg border border-red-200 dark:border-red-800/60 bg-red-50 dark:bg-red-900/20 text-sm text-red-700 dark:text-red-200">
+                    <Warning size={16} weight="fill" className="flex-shrink-0" />
+                    <span className="flex-1">{chatError}</span>
+                    <button type="button" onClick={() => setChatError('')} aria-label="Dismiss message error" className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/40">
+                        <X size={14} />
+                    </button>
+                </div>
+            )}
 
             <div className="flex h-[calc(100vh-12rem)] min-h-[440px] rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800/40 overflow-hidden shadow-card">
                 {showList && (
@@ -551,8 +622,7 @@ const Messages = () => {
                                                 </button>
                                             </>
                                         )}
-                                        {/* Refer an inventory item — works for both human chats (send to staff)
-                                            and the assistant thread (ask about the item). */}
+                                        {/* Refer an inventory item for human chats or the assistant. */}
                                         <button type="button" onClick={openItemPicker} aria-label="Refer an inventory item" className="w-10 h-10 flex items-center justify-center rounded-full text-gray-500 hover:text-accent hover:bg-gray-100 dark:hover:bg-gray-700/60 transition flex-shrink-0">
                                             <Package size={20} />
                                         </button>

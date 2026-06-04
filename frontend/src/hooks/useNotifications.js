@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import notificationService from '../services/notificationService';
 import useNotificationStore, { selectUnreadCount } from '../store/notificationStore';
 
@@ -25,14 +25,18 @@ const useNotifications = () => {
     const storeMarkAllRead = useNotificationStore((s) => s.markAllRead);
     const storeRemove = useNotificationStore((s) => s.removeOne);
     const storeClear = useNotificationStore((s) => s.clear);
+    const [loading, setLoading] = useState(false);
     const intervalRef = useRef(null);
 
     const fetchNotifications = useCallback(async () => {
+        setLoading(true);
         try {
             const data = await notificationService.getAll();
             setAll(Array.isArray(data) ? data : data.results || []);
         } catch {
             // empty/error state is handled by the UI; next sync will retry
+        } finally {
+            setLoading(false);
         }
     }, [setAll]);
 
@@ -71,7 +75,7 @@ const useNotifications = () => {
     return {
         notifications,
         unreadCount,
-        loading: false,
+        loading,
         fetchNotifications,
         markAsRead,
         markAllAsRead,

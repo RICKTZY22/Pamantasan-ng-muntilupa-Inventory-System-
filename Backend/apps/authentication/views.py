@@ -17,7 +17,7 @@ from .serializers import (
 )
 from .models import AuditLog, log_action
 from apps.common.images import validate_image_upload
-from apps.permissions import IsAdmin
+from apps.permissions import IsAdmin, IsStaffOrAbove
 
 User = get_user_model()
 
@@ -239,6 +239,8 @@ class LogoutView(APIView):
                 RefreshToken(refresh).blacklist()
             except Exception:
                 pass  # already expired/blacklisted/invalid — nothing to do
+        # Track logout time (logs only if the access token was still valid).
+        log_action(AuditLog.LOGOUT, user=request.user, details='Logged out', request=request)
         response = Response({'message': 'Logged out.'}, status=status.HTTP_200_OK)
         return _clear_refresh_cookie(response)
 
@@ -313,22 +315,42 @@ class ProfilePictureView(APIView):
 
 
 class AuditLogView(APIView):
-    """Admin-only listing of audit events. Supports ?limit= and ?action= filters."""
+    """Staff/admin listing of audit events. Filters: ?action=, ?user=<id>,
+    ?date=YYYY-MM-DD, ?limit= (<=200). Clearing (DELETE) stays admin-only."""
 
-    permission_classes = [IsAdmin]
+    def get_permissions(self):
+        if self.request.method == 'DELETE':
+            return [IsAdmin()]
+        return [IsStaffOrAbove()]
+
+    @staticmethod
+    def _avatar(user):
+        try:
+            return user.avatar.url if (user and user.avatar) else None
+        except ValueError:
+            return None
 
     def get(self, request):
-
         qs = AuditLog.objects.select_related('user').all()
 
-        # Optional filters
+        # Default to the meaningful events (logins/logouts + approvals/rejections);
+        # other recorded actions (e.g. failed logins) remain queryable via ?action=.
         action_filter = request.query_params.get('action')
         if action_filter:
             qs = qs.filter(action__icontains=action_filter)
+        else:
+            qs = qs.filter(action__in=[
+                AuditLog.LOGIN, AuditLog.LOGOUT,
+                AuditLog.REQUEST_APPROVED, AuditLog.REQUEST_REJECTED,
+            ])
 
-        username_filter = request.query_params.get('username')
-        if username_filter:
-            qs = qs.filter(username__icontains=username_filter)
+        user_filter = request.query_params.get('user')
+        if user_filter:
+            qs = qs.filter(user_id=user_filter)
+
+        date_filter = request.query_params.get('date')
+        if date_filter:
+            qs = qs.filter(timestamp__date=date_filter)
 
         try:
             limit = min(int(request.query_params.get('limit', 50)), 200)
@@ -341,6 +363,10 @@ class AuditLogView(APIView):
                 'id':         log.id,
                 'action':     log.action,
                 'user':       log.username or (log.user.username if log.user else 'System'),
+                'name':       (log.user.get_full_name() or log.user.username) if log.user else (log.username or 'System'),
+                'email':      log.user.email if log.user else '',
+                'avatar':     self._avatar(log.user),
+                'role':       log.user.role if log.user else '',
                 'details':    log.details,
                 'ip_address': log.ip_address,
                 'timestamp':  log.timestamp.isoformat(),

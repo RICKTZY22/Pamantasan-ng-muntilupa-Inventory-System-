@@ -21,11 +21,11 @@ let disconnectTimer = null;
 let shouldReconnect = false;
 let backoff = 1000;
 
-const wsUrl = (token) => {
+const wsUrl = () => {
     const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
     const origin = apiBase.replace(/\/api\/?$/, '');
     const wsOrigin = origin.replace(/^http/, 'ws'); // http→ws, https→wss
-    return `${wsOrigin}/ws/chat/?token=${encodeURIComponent(token)}`;
+    return `${wsOrigin}/ws/chat/`;
 };
 
 const handle = (evt) => {
@@ -62,7 +62,7 @@ const handle = (evt) => {
 };
 
 const openSocket = (token) => {
-    socket = new WebSocket(wsUrl(token));
+    socket = new WebSocket(wsUrl(), ['plmun.jwt', token]);
     socket.onopen = () => { backoff = 1000; useChatStore.getState().setConnected(true); resyncNotifications(); };
     socket.onmessage = (e) => { try { handle(JSON.parse(e.data)); } catch { /* ignore */ } };
     socket.onclose = () => {

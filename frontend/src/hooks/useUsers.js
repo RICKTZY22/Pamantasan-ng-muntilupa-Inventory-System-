@@ -127,6 +127,7 @@ const useUsers = () => {
         try {
             await userService.delete(userId);
             setUsers(prev => prev.filter(u => u.id !== userId));
+            fetchStats();
 
             return { success: true, message: 'User deleted' };
         } catch (err) {
@@ -136,7 +137,7 @@ const useUsers = () => {
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [fetchStats]);
 
     const unflagUser = useCallback(async (userId) => {
         setLoading(true);

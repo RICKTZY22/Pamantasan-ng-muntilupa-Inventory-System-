@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
+import { Link, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { List as Menu, Warning as AlertTriangle } from '@phosphor-icons/react';
 import { Sidebar, BottomNav, MaintenanceOverlay, AccountFlagOverlay } from '../components/layout';
-import { Dashboard, Inventory, Requests, Messages, Reports, Login, Register, Settings, Users, AccountDeactivated } from '../pages';
+import { Dashboard, Inventory, Requests, Messages, Reports, Login, Register, Settings, Users, AuditLogs, AccountDeactivated } from '../pages';
 import { NotificationDropdown, AnimatedBackground } from '../components/ui';
 import { useIsMobile, useMaintenanceWindow } from '../hooks';
 import useAuthStore from '../store/authStore';
@@ -20,6 +20,7 @@ const PAGE_TITLES = {
     '/reports': 'Reports',
     '/settings': 'Settings',
     '/users': 'User Management',
+    '/audit-logs': 'Audit Logs',
 };
 
 const DashboardGreeting = ({ user }) => (
@@ -169,12 +170,12 @@ const NotFound = () => (
         <p className="text-gray-500 dark:text-gray-400 mb-6 max-w-md">
             The page you're looking for doesn't exist or has been moved.
         </p>
-        <a
-            href="/dashboard"
+        <Link
+            to="/dashboard"
             className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary text-white rounded-xl font-medium hover:opacity-90 transition-opacity shadow-lg shadow-primary/20"
         >
             Go to Dashboard
-        </a>
+        </Link>
     </div>
 );
 
@@ -237,6 +238,14 @@ const AppRoutes = () => {
                 element={(
                     <RoleGuard minRole={ROLES.STAFF} showAccessDenied>
                         <Reports />
+                    </RoleGuard>
+                )}
+            />
+            <Route
+                path="/audit-logs"
+                element={(
+                    <RoleGuard minRole={ROLES.STAFF} showAccessDenied>
+                        <AuditLogs />
                     </RoleGuard>
                 )}
             />

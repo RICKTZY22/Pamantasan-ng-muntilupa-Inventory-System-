@@ -93,6 +93,12 @@ const useRequests = () => {
         try {
             const newRequest = await requestService.create(request);
             setRequests(prev => [newRequest, ...prev]);
+            setStats(prev => ({
+                ...prev,
+                total: prev.total + 1,
+                pending: prev.pending + (newRequest.status === 'PENDING' ? 1 : 0),
+                overdue: prev.overdue + (newRequest.isOverdue ? 1 : 0),
+            }));
             return { success: true, request: newRequest, message: 'Request submitted successfully' };
         } catch (err) {
             const errorMessage = formatApiError(err, 'Failed to create request');

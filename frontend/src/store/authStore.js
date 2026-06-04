@@ -38,7 +38,7 @@ const attachIdleListeners = (logoutFn) => {
     // Pause timer when tab is hidden, resume with remaining time when visible
     const onVisChange = () => {
         if (document.hidden) {
-            // Tab hidden → save remaining time and clear timer
+            // Tab hidden: save remaining time and clear timer.
             if (idleTimer && idleStartedAt) {
                 const elapsed = Date.now() - idleStartedAt;
                 idleRemainingMs = Math.max(0, idleRemainingMs - elapsed);
@@ -46,7 +46,7 @@ const attachIdleListeners = (logoutFn) => {
                 idleTimer = null;
             }
         } else {
-            // Tab visible → resume with remaining time (or logout if expired)
+            // Tab visible: resume with remaining time, or logout if expired.
             if (idleRemainingMs <= 0) {
                 logoutFn();
                 window.location.href = '/login';
@@ -84,7 +84,7 @@ const mapUserResponse = (user) => ({
     createdAt: user.date_joined,
 });
 
-// Keep idle handler reference at module level — NOT in Zustand state,
+// Keep the idle handler at module level, not in Zustand state,
 // because persist() would try to serialize the function to localStorage.
 let _currentIdleHandler = null;
 
@@ -94,7 +94,7 @@ const useAuthStore = create(
         (set, get) => ({
             // --- state ---
             user: null,
-            token: null,                 // access token — in memory only (also held in services/api.js)
+            token: null,                 // access token in memory only
             isAuthenticated: false,
             isInitializing: true,        // true until the reload bootstrap (initializeAuth) resolves
             isLoading: false,
@@ -208,19 +208,20 @@ const useAuthStore = create(
             updateProfile: async (profileData) => {
                 set({ isLoading: true, error: null });
                 try {
-                    const response = await authService.updateProfile(profileData);
+                    const editableProfile = {
+                        fullName: profileData.fullName,
+                        department: profileData.department,
+                        phone: profileData.phone,
+                    };
+                    const response = await authService.updateProfile(editableProfile);
 
                     const currentUser = get().user;
-                    const updatedUser = {
-                        ...currentUser,
-                        ...response,
-                        fullName: response.fullName || `${response.first_name} ${response.last_name}`.trim(),
-                    };
+                    const updatedUser = { ...currentUser, ...mapUserResponse(response) };
 
                     set({ user: updatedUser, isLoading: false });
                     return { success: true, user: updatedUser };
                 } catch (error) {
-                    const errorMessage = error.response?.data?.detail || error.message;
+                    const errorMessage = formatApiError(error, 'Failed to update profile');
                     set({ error: errorMessage, isLoading: false });
                     return { success: false, error: errorMessage };
                 }
@@ -272,11 +273,8 @@ const useAuthStore = create(
                     const profile = await authService.getProfile();
                     const mapped = mapUserResponse(profile);
                     const current = get().user;
-                    // only update if something actually changed
-                    if (current && (
-                        current.isFlagged !== mapped.isFlagged ||
-                        current.isActive !== mapped.isActive
-                    )) {
+                    const changed = current && Object.keys(mapped).some((key) => current[key] !== mapped[key]);
+                    if (changed) {
                         set({ user: { ...current, ...mapped } });
                     }
                     // if account was deactivated, redirect to deactivated page
@@ -285,7 +283,7 @@ const useAuthStore = create(
                         window.location.href = '/deactivated';
                     }
                 } catch {
-                    // don't care if this fails — it's just a background check
+                    // Background check only; retry on the next interval.
                 }
             },
 
@@ -309,7 +307,7 @@ const useAuthStore = create(
                     get().refreshProfile();
                     return true;
                 } catch {
-                    // refresh cookie gone/expired → drop the stale persisted session
+                    // Refresh cookie missing or expired: drop the stale session.
                     setAccessToken(null);
                     set({ user: null, token: null, isAuthenticated: false });
                     return false;

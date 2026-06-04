@@ -11,6 +11,7 @@ from django.db.models import Count
 from django.utils import timezone
 from django.utils.html import strip_tags
 from datetime import timedelta
+from urllib.parse import urlparse
 import re
 
 import requests
@@ -265,10 +266,24 @@ def _generate_gemini(prompt):
     return getattr(response, 'text', '') or ''
 
 
+def _validate_ollama_base_url(base):
+    parsed = urlparse(base)
+    if parsed.scheme not in {'http', 'https'} or not parsed.hostname:
+        raise AssistantUnavailable('OLLAMA_BASE_URL must be a valid http(s) URL.')
+
+    host = parsed.hostname.lower()
+    allowed_hosts = set(getattr(settings, 'OLLAMA_ALLOWED_HOSTS', ['localhost', '127.0.0.1', '::1']))
+    if '*' not in allowed_hosts and host not in allowed_hosts:
+        raise AssistantUnavailable(
+            f'Ollama host "{host}" is not allowed. Add it to OLLAMA_ALLOWED_HOSTS if this is intentional.'
+        )
+    return base.rstrip('/')
+
+
 def _generate_ollama(prompt):
     """Local provider (development). Talks to a running Ollama server over HTTP
     using the chat API — no API key needed. Returns raw reply text."""
-    base = getattr(settings, 'OLLAMA_BASE_URL', 'http://localhost:11434').rstrip('/')
+    base = _validate_ollama_base_url(getattr(settings, 'OLLAMA_BASE_URL', 'http://localhost:11434'))
     model = getattr(settings, 'OLLAMA_MODEL', 'qwen2.5:7b-instruct')
     num_ctx = getattr(settings, 'OLLAMA_NUM_CTX', 4096)
     # Bounded so a slow/hung local model can't tie up a request worker for minutes.

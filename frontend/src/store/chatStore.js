@@ -2,7 +2,16 @@ import { create } from 'zustand';
 
 // Real-time chat state. Fed by REST bootstrap (messageService) + live WS events
 // (chatSocket). Kept out of persist on purpose — it's session/live data.
-const sortConvs = (list) => [...list].sort((a, b) => {
+const dedupeConvs = (list = []) => {
+    const byId = new Map();
+    (Array.isArray(list) ? list : []).forEach((conv) => {
+        if (!conv?.id) return;
+        byId.set(conv.id, { ...(byId.get(conv.id) || {}), ...conv });
+    });
+    return [...byId.values()];
+};
+
+const sortConvs = (list) => dedupeConvs(list).sort((a, b) => {
     if (a.isAssistant && !b.isAssistant) return -1;
     if (!a.isAssistant && b.isAssistant) return 1;
     return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);

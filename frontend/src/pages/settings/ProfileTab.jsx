@@ -2,10 +2,8 @@ import React from 'react';
 import { User, Camera, Envelope as Mail, Phone, Buildings as Building, FloppyDisk as Save, Hash } from '@phosphor-icons/react';
 import { Button, Input, Avatar } from '../../components/ui';
 import { getRoleLabel, getRoleBadgeColor } from '../../utils/roles';
-import { isValidEmail } from '../../utils/validators';
 
 const ProfileTab = ({ user, profileForm, setProfileForm, handleProfileSave, updateAvatar, isLoading }) => {
-    const emailError = profileForm.email && !isValidEmail(profileForm.email) ? 'Enter a valid email address' : '';
     return (
         <div className="space-y-5">
             <div className="flex items-center gap-6 p-5 sm:p-6 bg-gray-50 dark:bg-gray-800/60 rounded-2xl border border-gray-200 dark:border-gray-700/60">
@@ -21,8 +19,8 @@ const ProfileTab = ({ user, profileForm, setProfileForm, handleProfileSave, upda
                             onChange={(e) => {
                                 const file = e.target.files[0];
                                 if (file) {
-                                    if (file.size > 2 * 1024 * 1024) {
-                                        alert('Image must be less than 2MB');
+                                    if (file.size > 5 * 1024 * 1024) {
+                                        alert('Image must be 5MB or smaller');
                                         return;
                                     }
                                     updateAvatar(file);
@@ -59,8 +57,8 @@ const ProfileTab = ({ user, profileForm, setProfileForm, handleProfileSave, upda
                         icon={Mail}
                         type="email"
                         value={profileForm.email}
-                        error={emailError}
-                        onChange={(e) => setProfileForm({ ...profileForm, email: e.target.value })}
+                        disabled
+                        className="opacity-70"
                     />
                     <Input
                         label="Phone Number"
@@ -87,7 +85,7 @@ const ProfileTab = ({ user, profileForm, setProfileForm, handleProfileSave, upda
             </div>
 
             <div className="flex justify-end">
-                <Button onClick={handleProfileSave} loading={isLoading} icon={Save} disabled={!!emailError}>
+                <Button onClick={handleProfileSave} loading={isLoading} icon={Save}>
                     Save changes
                 </Button>
             </div>

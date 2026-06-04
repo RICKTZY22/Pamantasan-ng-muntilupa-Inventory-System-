@@ -34,10 +34,9 @@ import FacultyTab from './settings/FacultyTab';
 import StaffTab from './settings/StaffTab';
 import SystemTab from './settings/SystemTab';
 import AdminTab from './settings/AdminTab';
-import HistoryTab from './settings/HistoryTab';
 import PreferencesTab from './settings/PreferencesTab';
 
-// tabs ng settings - depende sa role kung anong makikita
+// Settings tabs shown by role.
 const settingsTabs = [
     { id: 'profile', label: 'Profile', icon: User, minRole: null, desc: 'Your personal information and photo' },
     { id: 'preferences', label: 'Preferences', icon: Sliders, minRole: null, desc: 'Request defaults, display, and reminders' },
@@ -47,8 +46,7 @@ const settingsTabs = [
     { id: 'faculty', label: 'Faculty', icon: GraduationCap, exactRole: 'FACULTY', desc: 'Teaching department and borrowing limits' },
     { id: 'staff', label: 'Inventory', icon: Briefcase, minRole: ROLES.STAFF, desc: 'Defaults for managing inventory' },
     { id: 'system', label: 'System', icon: Wrench, minRole: ROLES.STAFF, desc: 'Categories and item conditions' },
-    { id: 'history', label: 'History & Flags', icon: History, minRole: ROLES.STAFF, desc: 'Request history and flagged accounts' },
-    { id: 'admin', label: 'Administration', icon: Shield, minRole: ROLES.ADMIN, desc: 'Maintenance, audit logs, and backups' },
+    { id: 'admin', label: 'Administration', icon: Shield, minRole: ROLES.ADMIN, desc: 'Maintenance and backups' },
 ];
 
 const MotionDiv = motion.div;
@@ -58,7 +56,7 @@ const Settings = () => {
     const { theme, setTheme, backgroundEffect, setBackgroundEffect, viewMode, setViewMode, itemsPerPage, setItemsPerPage, showImages, setShowImages } = useUIStore();
     const isMobile = useIsMobile();
     const reduce = useReducedMotion();
-    // sa mobile: null = menu list, string = tab content
+    // Mobile: null shows the menu, a string shows that tab.
     const [activeTab, setActiveTab] = useState(isMobile ? null : 'profile');
     const [navQuery, setNavQuery] = useState('');
 
@@ -175,8 +173,7 @@ const Settings = () => {
         retentionDays: 30,
     });
 
-    // flash message helper — replaces previous message with a unique key so React
-    // always re-mounts the notification (fixes overlap/no-animation on rapid clicks)
+    // Toast helper: replace the old message with a new key so React re-mounts it.
     const [saveMessage, setSaveMessage] = useState('');
     const [saveMessageKey, setSaveMessageKey] = useState(0);
     const flashTimerRef = React.useRef(null);
@@ -217,7 +214,7 @@ const Settings = () => {
                 if (parsed.conditions?.length) setConditions(parsed.conditions);
             }
         } catch {
-            // failed to load settings — use defaults
+            // Use defaults if saved settings fail to load.
         }
     }, [adminPrefsKey, facultyPrefsKey, notifPrefsKey, prefsKey, staffPrefsKey, user?.id]);
 
@@ -232,83 +229,36 @@ const Settings = () => {
         }
     };
 
-    const [auditLogs, setAuditLogs] = useState([]);
-    const [auditLogsLoading, setAuditLogsLoading] = useState(false);
-    const [clearLogsConfirm, setClearLogsConfirm] = useState(false);
-
-    const fetchAuditLogs = async () => {
-        try {
-            setAuditLogsLoading(true);
-            const { data } = await api.get('/auth/audit-logs/?limit=200');
-            setAuditLogs(data);
-        } catch (err) {
-            // audit log fetch failed — non-critical
-        } finally {
-            setAuditLogsLoading(false);
-        }
-    };
-
-    useEffect(() => {
-        if (activeTab === 'admin') fetchAuditLogs();
-    }, [activeTab]);
-
-    // daily auto-export ng audit logs sa PDF kapag binuksan ng admin
-    useEffect(() => {
-        if (activeTab !== 'admin' || auditLogs.length === 0) return;
-        const lastExportKey = 'audit-last-auto-export';
-        const lastExport = localStorage.getItem(lastExportKey);
-        const now = Date.now();
-        const ONE_DAY = 24 * 60 * 60 * 1000;
-        if (lastExport && (now - parseInt(lastExport, 10)) < ONE_DAY) return;
-
-        // Auto-export
-        const headers = ['Action', 'User', 'Details', 'IP Address', 'Timestamp'];
-        const rows = auditLogs.map(l => [
-            l.action, l.user || '—', l.details || '—', l.ip_address || '—',
-            new Date(l.timestamp).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }),
-        ]);
-        exportPDF('PLMun_Audit_Logs', 'Audit Log Report — Auto Export', headers, rows);
-        localStorage.setItem(lastExportKey, String(now));
-        flashMessage('✓ Daily audit log report exported automatically.', 4000);
-    }, [activeTab, auditLogs, flashMessage]);
-
-    const handleClearAuditLogs = async () => {
-        try {
-            const { data } = await api.delete('/auth/audit-logs/');
-            flashMessage('✓ ' + (data.message || 'Audit logs cleared.'));
-            fetchAuditLogs();
-        } catch (err) {
-            flashMessage('✗ ' + formatApiError(err, 'Failed to clear logs'), 5000);
-        }
-        setClearLogsConfirm(false);
-    };
-
-    const handleExportAuditLogs = () => {
-        const headers = ['Action', 'User', 'Details', 'IP Address', 'Timestamp'];
-        const rows = auditLogs.map(l => [
-            l.action, l.user || '—', l.details || '—', l.ip_address || '—',
-            new Date(l.timestamp).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }),
-        ]);
-        exportPDF('PLMun_Audit_Logs', 'Audit Log Report', headers, rows);
-        localStorage.setItem('audit-last-auto-export', String(Date.now()));
-    };
-
     const handleProfileSave = async () => {
-        await updateProfile(profileForm);
+        const result = await updateProfile(profileForm);
+        if (result?.success) {
+            flashMessage('Profile saved.');
+        } else {
+            flashMessage(`Error: ${result?.error || 'Failed to save profile'}`, 5000);
+        }
     };
 
     const handlePasswordChange = async () => {
         setPasswordError('');
         if (passwordForm.newPassword !== passwordForm.confirmPassword) {
             setPasswordError('Passwords do not match!');
+            flashMessage('Error: Passwords do not match!', 5000);
             return;
         }
         if (passwordForm.newPassword.length < 6) {
             setPasswordError('Password must be at least 6 characters.');
+            flashMessage('Error: Password must be at least 6 characters.', 5000);
             return;
         }
-        await changePassword(passwordForm);
-        setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+        const result = await changePassword(passwordForm);
+        if (result?.success) {
+            setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+            flashMessage('Password changed.');
+        } else {
+            const message = result?.error || 'Failed to change password';
+            setPasswordError(message);
+            flashMessage(`Error: ${message}`, 5000);
+        }
     };
 
 
@@ -441,9 +391,6 @@ const Settings = () => {
                     />
                 );
 
-            case 'history':
-                return <HistoryTab />;
-
             case 'admin':
                 return (
                     <AdminTab
@@ -453,15 +400,8 @@ const Settings = () => {
                         flashMessage={flashMessage}
                         saveSettings={saveSettings}
                         adminPrefsKey={adminPrefsKey}
-                        auditLogs={auditLogs}
-                        auditLogsLoading={auditLogsLoading}
-                        fetchAuditLogs={fetchAuditLogs}
-                        handleClearAuditLogs={handleClearAuditLogs}
-                        handleExportAuditLogs={handleExportAuditLogs}
                         handleBackupNow={handleBackupNow}
                         backupLoading={backupLoading}
-                        clearLogsConfirm={clearLogsConfirm}
-                        setClearLogsConfirm={setClearLogsConfirm}
                     />
                 );
 
@@ -470,10 +410,10 @@ const Settings = () => {
         }
     };
 
-    // Semantic, dark-aware save toast (emerald success / red on a leading ✗).
+    // Save toast: green for success, red for errors.
     const renderToast = (className = '') => {
         if (!saveMessage) return null;
-        const isErr = saveMessage.startsWith('✗');
+        const isErr = saveMessage.startsWith('✗') || saveMessage.startsWith('Error:');
         return (
             <div
                 key={saveMessageKey}
@@ -565,7 +505,7 @@ const Settings = () => {
         );
     }
 
-    // Desktop layout — Windows 11 Settings style
+    // Desktop layout.
     const activeId = activeTab || 'profile';
     const currentTab = visibleTabs.find(t => t.id === activeId);
     const CurrentIcon = currentTab?.icon || SettingsIcon;

@@ -1,5 +1,6 @@
 from django.db import models
 from django.conf import settings
+from apps.common.uploads import chat_upload_path
 
 
 def dm_key_for_user_ids(user_a_id, user_b_id):
@@ -79,7 +80,7 @@ class Message(models.Model):
         related_name='referenced_in_messages',
         help_text='Optional inventory item this message refers to.',
     )
-    attachment = models.ImageField(upload_to='chat/', null=True, blank=True)
+    attachment = models.ImageField(upload_to=chat_upload_path, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

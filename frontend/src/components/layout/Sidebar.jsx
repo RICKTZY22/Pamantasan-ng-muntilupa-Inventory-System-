@@ -11,6 +11,7 @@ import {
     List as Menu,
     Users,
     ChatCircle as MessageIcon,
+    ClockCounterClockwise as AuditIcon,
     X
 } from '@phosphor-icons/react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
@@ -53,6 +54,9 @@ const getNavGroups = (userRole) => {
     const mgmtItems = [];
     if (hasMinRole(userRole, ROLES.ADMIN)) {
         mgmtItems.push({ icon: Users, label: 'Users', path: '/users' });
+    }
+    if (hasMinRole(userRole, ROLES.STAFF)) {
+        mgmtItems.push({ icon: AuditIcon, label: 'Audit Logs', path: '/audit-logs' });
     }
     mgmtItems.push({ icon: Settings, label: 'Settings', path: '/settings' });
 
