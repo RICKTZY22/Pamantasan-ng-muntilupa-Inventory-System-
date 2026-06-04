@@ -1,6 +1,7 @@
 # PLMun Inventory Nexus
 
-[![CI](https://github.com/RICKTZY22/plmun-nexus-/actions/workflows/ci.yml/badge.svg)](https://github.com/RICKTZY22/plmun-nexus-/actions/workflows/ci.yml)
+[![CI](https://github.com/RICKTZY22/Pamantasan-ng-muntilupa-Inventory-System-/actions/workflows/ci.yml/badge.svg)](https://github.com/RICKTZY22/Pamantasan-ng-muntilupa-Inventory-System-/actions/workflows/ci.yml)
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/b2511b3b452a44fabd046165bcc7183e)](https://app.codacy.com/gh/RICKTZY22/Pamantasan-ng-muntilupa-Inventory-System-/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 
 A full-stack inventory, borrowing, notification, and messaging system for Pamantasan ng Lungsod ng Muntinlupa.
 
