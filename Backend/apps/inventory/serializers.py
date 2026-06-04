@@ -63,6 +63,11 @@ class ItemCreateUpdateSerializer(serializers.ModelSerializer):
             'description', 'imageUrl', 'accessLevel', 'isReturnable', 'priority',
             'borrowDuration', 'borrowDurationUnit',
         ]
+        # status changes must go through the change_status action (which records
+        # audit metadata: who/when/note). Direct create/PATCH of status is ignored
+        # so the audit trail can't be bypassed (finding N2). New items default to
+        # AVAILABLE; use change_status to move them to Maintenance/Retired.
+        read_only_fields = ['status']
 
     def validate_quantity(self, value):
         if value < 0:

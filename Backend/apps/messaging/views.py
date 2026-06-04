@@ -10,6 +10,8 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.utils.decorators import method_decorator
+from django_ratelimit.decorators import ratelimit
 
 from apps.common.images import validate_image_upload
 from apps.inventory.models import Item
@@ -224,7 +226,11 @@ class AssistantConversationView(APIView):
 class AssistantMessageView(APIView):
     """Persist a user question, call the configured LLM, then save the reply."""
 
+    @method_decorator(ratelimit(key='user', rate='20/m', method='POST', block=False))
     def post(self, request):
+        if getattr(request, 'limited', False):
+            return Response({'detail': 'Too many assistant requests. Please slow down.'},
+                            status=status.HTTP_429_TOO_MANY_REQUESTS)
         # Optional referred item — resolved through the user's role-scoped
         # visibility so they can only ask about items they're allowed to see.
         item = None

@@ -201,7 +201,11 @@ class CookieTokenRefreshView(TokenRefreshView):
     Returns a new access token in the body and rotates the refresh cookie.
     401 (and clears the cookie) if it's missing/invalid so the SPA re-logs in."""
 
+    @method_decorator(ratelimit(key='ip', rate='60/m', method='POST', block=False))
     def post(self, request, *args, **kwargs):
+        if getattr(request, 'limited', False):
+            return Response({'detail': 'Too many refresh attempts. Please slow down.'},
+                            status=status.HTTP_429_TOO_MANY_REQUESTS)
         refresh = request.COOKIES.get(settings.REFRESH_COOKIE_NAME)
         if not refresh:
             return Response({'detail': 'No refresh token.'}, status=status.HTTP_401_UNAUTHORIZED)
@@ -247,7 +251,11 @@ class ProfileView(APIView):
         serializer = UserSerializer(request.user, context={'request': request})
         return Response(serializer.data)
 
+    @method_decorator(ratelimit(key='user', rate='20/m', method='PUT', block=False))
     def put(self, request):
+        if getattr(request, 'limited', False):
+            return Response({'detail': 'Too many updates. Please slow down.'},
+                            status=status.HTTP_429_TOO_MANY_REQUESTS)
         serializer = ProfileUpdateSerializer(
             request.user,
             data=request.data,
@@ -265,7 +273,11 @@ class ChangePasswordView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = ChangePasswordSerializer
 
+    @method_decorator(ratelimit(key='user', rate='5/m', method='POST', block=False))
     def post(self, request):
+        if getattr(request, 'limited', False):
+            return Response({'detail': 'Too many attempts. Please slow down.'},
+                            status=status.HTTP_429_TOO_MANY_REQUESTS)
         serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         serializer.save()

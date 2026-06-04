@@ -218,6 +218,13 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# Upload / request-body size caps (defense-in-depth). Image uploads are also
+# validated to <=5 MB (apps/common/images.py); these cap the raw request body and
+# field count so a malformed/huge POST can't exhaust memory (finding N6).
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024   # 10 MB non-file POST body
+FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024    # 5 MB before streaming to a temp file
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 2000
+
 # Cache (required by django-ratelimit)
 _redis_url = os.environ.get('REDIS_URL')
 if _redis_url:

@@ -22,11 +22,14 @@ urlpatterns = [
     path('api/users/', include('apps.users.urls')),
     path('api/messaging/', include('apps.messaging.urls')),
 
-    # API docs (Swagger / Redoc)
-    path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
-    path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
-    path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
 ]
 
 if settings.DEBUG:
+    # API docs (Swagger / Redoc / schema) are dev-only — not exposed in
+    # production, where they'd leak the full API surface (finding #8).
+    urlpatterns += [
+        path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
+        path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
+        path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
+    ]
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

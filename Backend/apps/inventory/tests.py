@@ -216,3 +216,33 @@ class ItemImageUploadTests(APITestCase):
             'priority': Item.Priority.MEDIUM,
         }, format='json')
         self.assertEqual(response.status_code, 201)
+
+
+class ItemStatusWriteProtectionTests(APITestCase):
+    """Item status changes only via the audited change_status action; direct
+    create/PATCH of status is ignored (finding N2)."""
+
+    def setUp(self):
+        self.staff = get_user_model().objects.create_user(
+            username='staff_status', password='password', role='STAFF',
+        )
+        self.client.force_authenticate(self.staff)
+
+    def test_create_ignores_client_status(self):
+        response = self.client.post('/api/inventory/', {
+            'name': 'Projector', 'category': Item.Category.ELECTRONICS, 'quantity': 1,
+            'status': Item.Status.RETIRED, 'location': 'Room 1',
+            'accessLevel': 'STUDENT', 'priority': Item.Priority.MEDIUM,
+        }, format='json')
+        self.assertEqual(response.status_code, 201)
+        item = Item.objects.get(name='Projector')
+        self.assertNotEqual(item.status, Item.Status.RETIRED)
+
+    def test_patch_cannot_change_status(self):
+        item = Item.objects.create(
+            name='Camera', category=Item.Category.ELECTRONICS, quantity=1,
+            status=Item.Status.AVAILABLE, access_level='STUDENT',
+        )
+        self.client.patch(f'/api/inventory/{item.id}/', {'status': Item.Status.RETIRED}, format='json')
+        item.refresh_from_db()
+        self.assertEqual(item.status, Item.Status.AVAILABLE)

@@ -17,6 +17,15 @@ class UserViewSet(viewsets.ModelViewSet):
     serializer_class = UserSerializer
     permission_classes = [IsAdmin]
     
+    def create(self, request, *args, **kwargs):
+        """User creation goes through /api/auth/register/ (which validates and
+        hashes a password). The default ModelViewSet create would make a
+        passwordless, unusable account, so it's disabled here (finding #27)."""
+        return Response(
+            {'detail': 'Create users via /api/auth/register/.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
     def get_queryset(self):
         """Filter and search users."""
         queryset = User.objects.all()

@@ -28,6 +28,16 @@ class UserManagementSafetyTests(APITestCase):
         )
         self.client.force_authenticate(self.admin)
 
+    def test_create_user_endpoint_is_disabled(self):
+        # Creation must go through /auth/register/ (sets+hashes a password); the
+        # bare ModelViewSet create made passwordless, unusable accounts (#27).
+        before = User.objects.count()
+        response = self.client.post('/api/users/', {
+            'username': 'ghost', 'email': 'ghost@plmun.edu.ph', 'role': User.Role.STUDENT,
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        self.assertEqual(User.objects.count(), before)
+
     def test_admin_cannot_remove_own_admin_role(self):
         response = self.client.put(f'/api/users/{self.admin.id}/role/', {'role': User.Role.STAFF}, format='json')
 
