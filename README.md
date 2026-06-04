@@ -145,6 +145,25 @@ Required production values include:
 - Frontend `VITE_API_URL`
 - Optional assistant provider keys
 
+## Acknowledgments
+
+This system was designed and built by the project author as a capstone for
+Pamantasan ng Lungsod ng Muntinlupa. The author directed all requirements,
+product decisions, and review.
+
+Portions of the codebase were developed with AI assistance from **Claude**
+(Anthropic), via Claude Code, working under the author's instruction. Claude
+contributed to areas including:
+
+- the read-only Messages assistant and local Ollama / Gemini provider integration,
+- the two-step borrow/return handshake and overdue + notification logic,
+- real-time notifications over WebSockets,
+- server-side pagination and filtering for the requests workflow,
+- backend hardening (endpoint rate-limiting, image-upload validation, JWT
+  HttpOnly-cookie auth) and the accompanying automated tests.
+
+All AI-assisted work was reviewed, tested, and approved by the author.
+
 ## License
 
 Coursework project. No formal license is granted.
