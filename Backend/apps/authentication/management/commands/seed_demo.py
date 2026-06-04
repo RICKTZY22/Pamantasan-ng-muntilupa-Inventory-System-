@@ -19,6 +19,7 @@ from datetime import timedelta
 import os
 import secrets
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from django.db import transaction
@@ -31,6 +32,12 @@ User = get_user_model()
 
 
 DEMO_PASSWORD_ENV = 'DEMO_PASSWORD'
+
+# Dev convenience: when DEBUG is on and DEMO_PASSWORD isn't set, the demo
+# accounts are seeded with this known password so you can log in immediately.
+# Production (DEBUG=False) never uses it — a password must come from the env,
+# otherwise a random one is generated — so a known password is never shipped live.
+DEV_DEMO_PASSWORD = 'demo_pass_2026'
 
 DEMO_USERS = [
     {
@@ -104,7 +111,10 @@ class Command(BaseCommand):
 
     @transaction.atomic
     def handle(self, *args, **options):
-        demo_password = os.environ.get(DEMO_PASSWORD_ENV) or secrets.token_urlsafe(12)
+        demo_password = (
+            os.environ.get(DEMO_PASSWORD_ENV)
+            or (DEV_DEMO_PASSWORD if settings.DEBUG else secrets.token_urlsafe(12))
+        )
 
         if options['reset']:
             self._reset()
