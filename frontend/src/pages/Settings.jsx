@@ -24,7 +24,7 @@ import useUIStore from '../store/uiStore';
 import { useIsMobile } from '../hooks';
 import { ROLES } from '../utils/roles';
 import { formatApiError } from '../utils/errorUtils';
-import { exportPDF } from '../utils/exportUtils';
+
 import api from '../services/api';
 import ProfileTab from './settings/ProfileTab';
 import SecurityTab from './settings/SecurityTab';
