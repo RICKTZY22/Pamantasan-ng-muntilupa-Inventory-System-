@@ -69,3 +69,6 @@ Desktop.ini
 ~$*.docx
 ~$*.xlsx
 ~$*.pptx
+
+# Local planning / internal notes (not for repo)
+AI_ASSIST_PLAN.md
