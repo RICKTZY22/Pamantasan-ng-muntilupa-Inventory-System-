@@ -440,7 +440,10 @@ class MaintenanceView(APIView):
     def get_permissions(self):
         if self.request.method == 'POST':
             return [permissions.IsAuthenticated(), IsAdmin()]
-        return [permissions.AllowAny()]
+        # GET: authenticated only. The maintenance banner runs inside the
+        # authenticated layout (not the login page), so anonymous access only
+        # leaked the on/off flag (N1).
+        return [permissions.IsAuthenticated()]
 
     def get(self, request):
         from django.core.cache import cache
