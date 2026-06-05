@@ -890,7 +890,7 @@ const Reports = () => {
                                     </div>
 
                                     {overdueGroups.length > 0 ? (
-                                        <div className="space-y-2">
+                                        <div className="max-h-[28rem] space-y-2 overflow-y-auto pr-1">
                                             {overdueGroups.map((group) => {
                                                 const open = !!expandedBorrowers[group.borrowerId];
                                                 return (
