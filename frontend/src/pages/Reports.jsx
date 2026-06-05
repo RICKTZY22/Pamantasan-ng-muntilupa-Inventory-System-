@@ -9,6 +9,9 @@ import {
     Package,
     CircleNotch as Loader2,
     Warning as AlertTriangle,
+    MagnifyingGlass,
+    CaretDown,
+    CaretRight,
 } from '@phosphor-icons/react';
 import { Button, Card } from '../components/ui';
 import { BarChartComponent, LineChartComponent, PieChartComponent } from '../components/dashboard';
@@ -72,8 +75,16 @@ const SectionTitle = ({ kicker, title, description }) => (
 
 const Reports = () => {
     const [dateRange, setDateRange] = useState('month');
-    const { inventory, fetchInventory, fetchStats: fetchInventoryStats, loading: inventoryLoading } = useInventory();
-    const { requests, fetchRequests, loading: requestsLoading } = useRequests();
+    const [overdueSearch, setOverdueSearch] = useState('');
+    const [debouncedOverdueSearch, setDebouncedOverdueSearch] = useState('');
+    const [expandedBorrowers, setExpandedBorrowers] = useState({});
+    const { inventory, stats: inventoryStats, fetchInventory, fetchStats: fetchInventoryStats, loading: inventoryLoading } = useInventory();
+    const {
+        requests, fetchRequests, loading: requestsLoading,
+        stats: requestStats, fetchStats: fetchRequestStats,
+        popularItems, fetchPopularItems,
+        overdueGroups, fetchOverdueGrouped,
+    } = useRequests();
 
     // Fetch real data on mount
     // Reports always include cleared (soft-deleted) requests so charts keep historical data
@@ -82,6 +93,29 @@ const Reports = () => {
         fetchInventoryStats();
         fetchRequests({ include_cleared: true });
     }, [fetchInventory, fetchInventoryStats, fetchRequests]);
+
+    // Most-requested chart follows the selected range.
+    useEffect(() => {
+        fetchPopularItems(dateRange);
+    }, [dateRange, fetchPopularItems]);
+
+    // Period-scoped request stats for the cards. Depends on `requests` too: the
+    // full-list fetch (needed for trends/export) overwrites the shared stats with
+    // its own client counts, so we re-run this afterwards to keep the authoritative
+    // backend period stats as the final value instead of being clobbered.
+    useEffect(() => {
+        fetchRequestStats(dateRange);
+    }, [dateRange, requests, fetchRequestStats]);
+
+    // Debounce the overdue search, then fetch the borrower-grouped overdue list.
+    useEffect(() => {
+        const t = setTimeout(() => setDebouncedOverdueSearch(overdueSearch.trim()), 300);
+        return () => clearTimeout(t);
+    }, [overdueSearch]);
+
+    useEffect(() => {
+        fetchOverdueGrouped(debouncedOverdueSearch);
+    }, [debouncedOverdueSearch, fetchOverdueGrouped]);
 
     // Get the start date for the selected time period
     const getDateCutoff = (range) => {
@@ -126,20 +160,8 @@ const Reports = () => {
         });
     }, [requests, dateRange]);
 
-    // Filtered summary stats for the cards
-    const filteredStats = useMemo(() => {
-        const inv = filteredInventory;
-        const req = filteredRequests;
-        const approved = req.filter(r => ['APPROVED', 'COMPLETED', 'RETURNED'].includes(r.status)).length;
-        const rejected = req.filter(r => ['REJECTED', 'CANCELLED'].includes(r.status)).length;
-        const total = approved + rejected;
-        return {
-            totalItems: inv.length,
-            availableItems: inv.filter(i => i.status === 'AVAILABLE').length,
-            totalRequests: req.length,
-            approvalRate: total > 0 ? Math.round((approved / total) * 100) : 0,
-        };
-    }, [filteredInventory, filteredRequests]);
+    // Card metrics come from the backend aggregation endpoints (live inventory
+    // stats + period-scoped request stats), not client-side date filtering.
 
     // Category distribution from ALL inventory (not date-filtered)
     const categoryDistribution = useMemo(() => {
@@ -262,21 +284,7 @@ const Reports = () => {
         return { months, categories: allCategories };
     }, [inventory, numMonths]);
 
-    const approvalRate = filteredStats.approvalRate;
-
-    // Top requested items from filtered requests
-    const popularItems = useMemo(() => {
-        if (filteredRequests.length === 0) return [];
-        const itemCounts = {};
-        filteredRequests.forEach(r => {
-            const name = r.itemName || 'Unknown';
-            itemCounts[name] = (itemCounts[name] || 0) + r.quantity;
-        });
-        return Object.entries(itemCounts)
-            .map(([name, count]) => ({ name, count }))
-            .sort((a, b) => b.count - a.count)
-            .slice(0, 8);
-    }, [filteredRequests]);
+    // popularItems comes from the backend (server-aggregated, period-scoped).
 
     // Priority breakdown from filtered requests (matches selected date range)
     const priorityDistribution = useMemo(() => {
@@ -761,11 +769,11 @@ const Reports = () => {
                     <>
                         <div ref={chartsRef} className="grid grid-cols-1 gap-6 xl:grid-cols-[290px_minmax(0,1fr)]">
                             <aside className="space-y-4">
-                                <ReportMetricCard icon={Package} value={filteredStats.totalItems} label="Items tracked" hint={periodLabel} />
-                                <ReportMetricCard icon={CheckCircle} value={filteredStats.availableItems} label="Available items" hint="Ready for borrowing" tone="emerald" />
-                                <ReportMetricCard icon={ClipboardText} value={filteredStats.totalRequests} label="Borrow requests" hint={periodLabel} tone="blue" />
-                                <ReportMetricCard icon={ChartLineUp} value={`${approvalRate}%`} label="Approval rate" hint="Approved vs decided" tone="amber" />
-                                <ReportMetricCard icon={AlertTriangle} value={overdueRequests.length} label="Overdue returns" hint="Needs follow-up" tone={overdueRequests.length ? 'red' : 'emerald'} />
+                                <ReportMetricCard icon={Package} value={inventoryStats?.total ?? 0} label="Items tracked" hint="Live total" />
+                                <ReportMetricCard icon={CheckCircle} value={inventoryStats?.available ?? 0} label="Available items" hint="Ready for borrowing" tone="emerald" />
+                                <ReportMetricCard icon={ClipboardText} value={requestStats?.total ?? 0} label="Borrow requests" hint={periodLabel} tone="blue" />
+                                <ReportMetricCard icon={ChartLineUp} value={`${requestStats?.approvalRate ?? 0}%`} label="Approval rate" hint="Approved vs decided" tone="amber" />
+                                <ReportMetricCard icon={AlertTriangle} value={requestStats?.overdue ?? 0} label="Overdue returns" hint="Needs follow-up" tone={(requestStats?.overdue) ? 'red' : 'emerald'} />
                             </aside>
 
                             <main className="space-y-6">
@@ -836,7 +844,7 @@ const Reports = () => {
                                         {popularItems.length > 0 ? (
                                             <BarChartComponent
                                                 data={popularItems}
-                                                bars={[{ dataKey: 'count', name: 'Times Requested', color: '#6366f1' }]}
+                                                bars={[{ dataKey: 'count', name: 'Times Requested' }]}
                                                 xAxisKey="name"
                                                 title="Most requested items"
                                             />
@@ -856,54 +864,100 @@ const Reports = () => {
                         </div>
 
                         <section className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-                            <Card className={overdueRequests.length ? 'border-red-200 dark:border-red-900/50' : ''}>
+                            <Card className={requestStats?.overdue ? 'border-red-200 dark:border-red-900/50' : ''}>
                                 <Card.Header>
                                     <Card.Title className="flex items-center gap-2">
-                                        <AlertTriangle className={overdueRequests.length ? 'text-red-500' : 'text-emerald-500'} size={20} weight="duotone" />
+                                        <AlertTriangle className={requestStats?.overdue ? 'text-red-500' : 'text-emerald-500'} size={20} weight="duotone" />
                                         Overdue returns
                                     </Card.Title>
-                                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${overdueRequests.length ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'}`}>
-                                        {overdueRequests.length}
+                                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${requestStats?.overdue ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'}`}>
+                                        {requestStats?.overdue ?? 0}
                                     </span>
                                 </Card.Header>
                                 <Card.Content>
-                                    {overdueRequests.length > 0 ? (
-                                        <div className="overflow-x-auto">
-                                            <table className="w-full text-sm">
-                                                <thead>
-                                                    <tr className="border-b border-gray-100 dark:border-gray-700/50">
-                                                        <th className="px-4 py-3 text-left font-semibold text-gray-600 dark:text-gray-300">Item</th>
-                                                        <th className="px-4 py-3 text-left font-semibold text-gray-600 dark:text-gray-300">Borrower</th>
-                                                        <th className="px-4 py-3 text-right font-semibold text-gray-600 dark:text-gray-300">Qty</th>
-                                                        <th className="px-4 py-3 text-left font-semibold text-gray-600 dark:text-gray-300">Expected Return</th>
-                                                        <th className="px-4 py-3 text-right font-semibold text-gray-600 dark:text-gray-300">Late</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {overdueRequests.map((req) => (
-                                                        <tr key={req.id} className="border-b border-gray-50 hover:bg-red-50/30 dark:border-gray-800 dark:hover:bg-red-900/10">
-                                                            <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">{req.itemName}</td>
-                                                            <td className="px-4 py-3 text-gray-600 dark:text-gray-300">{req.requestedBy}</td>
-                                                            <td className="px-4 py-3 text-right text-gray-600 dark:text-gray-300">{req.quantity}</td>
-                                                            <td className="px-4 py-3 text-gray-600 dark:text-gray-300">{req.expectedReturn}</td>
-                                                            <td className="px-4 py-3 text-right">
-                                                                <span className={`inline-flex rounded-full px-2 py-1 text-xs font-bold ${req.daysOverdue > 7 ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300' :
-                                                                    req.daysOverdue > 3 ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300' :
-                                                                        'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-                                                                    }`}>
-                                                                    {req.daysOverdue}d
-                                                                </span>
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
+                                    {/* Grouped by borrower so the list stays short even with many
+                                        overdue items; click a borrower to reveal their unreturned
+                                        items. Search (borrower or item) is handled server-side. */}
+                                    <div className="relative mb-4">
+                                        <MagnifyingGlass size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                                        <input
+                                            type="text"
+                                            value={overdueSearch}
+                                            onChange={(e) => setOverdueSearch(e.target.value)}
+                                            placeholder="Search borrower or item…"
+                                            className="w-full rounded-xl border border-gray-200 bg-gray-50 py-2 pl-9 pr-3 text-sm text-gray-900 placeholder-gray-400 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-gray-700 dark:bg-gray-900/40 dark:text-white"
+                                        />
+                                    </div>
+
+                                    {overdueGroups.length > 0 ? (
+                                        <div className="space-y-2">
+                                            {overdueGroups.map((group) => {
+                                                const open = !!expandedBorrowers[group.borrowerId];
+                                                return (
+                                                    <div key={group.borrowerId} className="overflow-hidden rounded-xl border border-gray-100 dark:border-gray-700/50">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setExpandedBorrowers(prev => ({ ...prev, [group.borrowerId]: !prev[group.borrowerId] }))}
+                                                            className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-red-50/50 dark:hover:bg-red-900/10"
+                                                            aria-expanded={open}
+                                                        >
+                                                            {open
+                                                                ? <CaretDown size={16} className="shrink-0 text-gray-400" />
+                                                                : <CaretRight size={16} className="shrink-0 text-gray-400" />}
+                                                            <div className="min-w-0 flex-1">
+                                                                <p className="truncate font-semibold text-gray-900 dark:text-white">{group.borrowerName}</p>
+                                                                {group.studentId && <p className="truncate text-xs text-gray-400 dark:text-gray-500">{group.studentId}</p>}
+                                                            </div>
+                                                            <span className="shrink-0 rounded-full bg-red-100 px-2.5 py-1 text-xs font-bold text-red-700 dark:bg-red-900/40 dark:text-red-300">
+                                                                {group.count} overdue
+                                                            </span>
+                                                            <span className="hidden shrink-0 text-xs font-medium text-gray-400 dark:text-gray-500 sm:inline">
+                                                                up to {group.maxDaysOverdue}d
+                                                            </span>
+                                                        </button>
+                                                        {open && (
+                                                            <div className="overflow-x-auto border-t border-gray-100 dark:border-gray-700/50">
+                                                                <table className="w-full text-sm">
+                                                                    <thead>
+                                                                        <tr className="bg-gray-50/60 dark:bg-gray-900/30">
+                                                                            <th className="px-4 py-2 text-left font-semibold text-gray-500 dark:text-gray-400">Item</th>
+                                                                            <th className="px-4 py-2 text-right font-semibold text-gray-500 dark:text-gray-400">Qty</th>
+                                                                            <th className="px-4 py-2 text-left font-semibold text-gray-500 dark:text-gray-400">Expected Return</th>
+                                                                            <th className="px-4 py-2 text-right font-semibold text-gray-500 dark:text-gray-400">Late</th>
+                                                                        </tr>
+                                                                    </thead>
+                                                                    <tbody>
+                                                                        {group.items.map((item) => (
+                                                                            <tr key={item.id} className="border-t border-gray-50 dark:border-gray-800">
+                                                                                <td className="px-4 py-2 font-medium text-gray-900 dark:text-white">{item.itemName}</td>
+                                                                                <td className="px-4 py-2 text-right text-gray-600 dark:text-gray-300">{item.quantity}</td>
+                                                                                <td className="px-4 py-2 text-gray-600 dark:text-gray-300">{new Date(item.expectedReturn).toLocaleDateString()}</td>
+                                                                                <td className="px-4 py-2 text-right">
+                                                                                    <span className={`inline-flex rounded-full px-2 py-1 text-xs font-bold ${item.daysOverdue > 7 ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300' : item.daysOverdue > 3 ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'}`}>
+                                                                                        {item.daysOverdue}d
+                                                                                    </span>
+                                                                                </td>
+                                                                            </tr>
+                                                                        ))}
+                                                                    </tbody>
+                                                                </table>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
                                     ) : (
                                         <div className="py-10 text-center">
                                             <CheckCircle size={36} weight="duotone" className="mx-auto text-emerald-500" />
-                                            <p className="mt-2 font-semibold text-gray-700 dark:text-gray-200">No overdue returns</p>
-                                            <p className="text-sm text-gray-400 dark:text-gray-500">All active borrow records are within their expected return date.</p>
+                                            <p className="mt-2 font-semibold text-gray-700 dark:text-gray-200">
+                                                {debouncedOverdueSearch ? 'No matches' : 'No overdue returns'}
+                                            </p>
+                                            <p className="text-sm text-gray-400 dark:text-gray-500">
+                                                {debouncedOverdueSearch
+                                                    ? 'No overdue items match your search.'
+                                                    : 'All active borrow records are within their expected return date.'}
+                                            </p>
                                         </div>
                                     )}
                                 </Card.Content>

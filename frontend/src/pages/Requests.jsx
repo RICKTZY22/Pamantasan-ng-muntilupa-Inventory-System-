@@ -370,8 +370,22 @@ const Requests = () => {
             setItemSearch('');
             setSelectedItem(null);
             reload();
+            fetchInventory();
         } else {
-            setFormError(res?.error || 'Failed to submit request');
+            // Re-check at submit: the backend re-validates against the item's LIVE
+            // status/stock. If it was rejected (e.g. the item went out of stock or
+            // in use while the form was open), show a clean message and refresh
+            // inventory so the now-unavailable item drops out of the picker.
+            const raw = res?.error || 'Failed to submit request';
+            setFormError(raw.replace(/^(item|quantity|detail|non_field_errors):\s*/i, ''));
+            fetchInventory();
+            // Only drop the selection when the item itself is no longer requestable;
+            // for a quantity error keep it so the user can just lower the amount.
+            if (/available items can be requested|not allowed to request/i.test(raw)) {
+                setSelectedItem(null);
+                setItemSearch('');
+                setFormData(prev => ({ ...prev, item: null, itemName: '' }));
+            }
         }
     };
 

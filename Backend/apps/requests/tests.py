@@ -475,3 +475,146 @@ class NotificationApiTests(APITestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(Notification.objects.get().is_read)
+
+
+class StricterRequestTests(APITestCase):
+    """A user cannot request an item that is in use or out of stock."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.student = User.objects.create_user(username='strict_stu', password='password', role='STUDENT')
+        self.item = Item.objects.create(
+            name='Tablet', category=Item.Category.ELECTRONICS, quantity=2,
+            status=Item.Status.AVAILABLE, access_level='STUDENT',
+        )
+        self.client.force_authenticate(self.student)
+
+    def _post(self, item, quantity):
+        return self.client.post('/api/requests/', {
+            'item': item.id, 'quantity': quantity, 'purpose': 'Class',
+        }, format='json')
+
+    def test_in_use_item_cannot_be_requested(self):
+        self.item.status = Item.Status.IN_USE
+        self.item.save(update_fields=['status'])
+        resp = self._post(self.item, 1)
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('item', resp.data)
+
+    def test_request_exceeding_stock_is_rejected(self):
+        resp = self._post(self.item, 3)   # only 2 in stock
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('quantity', resp.data)
+
+    def test_zero_stock_available_item_cannot_be_requested(self):
+        self.item.quantity = 0
+        self.item.save(update_fields=['quantity'])
+        resp = self._post(self.item, 1)   # 1 > 0 available
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('quantity', resp.data)
+
+
+class ReportAggregationTests(APITestCase):
+    """Backend aggregation for the Reports page: period-scoped request stats +
+    approval rate, most-requested items, and overdue grouped by borrower."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.staff = User.objects.create_user(username='rep_staff', password='password', role='STAFF')
+        self.s1 = User.objects.create_user(username='rep_s1', password='password', role='STUDENT',
+                                           first_name='Ana', last_name='Cruz')
+        self.s2 = User.objects.create_user(username='rep_s2', password='password', role='STUDENT',
+                                           first_name='Ben', last_name='Reyes')
+        self.item_a = Item.objects.create(name='Projector', category=Item.Category.ELECTRONICS,
+                                          quantity=5, status=Item.Status.AVAILABLE, access_level='STUDENT')
+        self.item_b = Item.objects.create(name='Camera', category=Item.Category.ELECTRONICS,
+                                          quantity=5, status=Item.Status.AVAILABLE, access_level='STUDENT')
+
+    def _make(self, created_at=None, **kw):
+        defaults = dict(item=self.item_a, item_name=self.item_a.name, requested_by=self.s1,
+                        quantity=1, purpose='x', status='PENDING')
+        defaults.update(kw)
+        req = Request.objects.create(**defaults)
+        if created_at is not None:                          # created_at is auto_now_add; backdate after insert
+            Request.objects.filter(pk=req.pk).update(created_at=created_at)
+            req.refresh_from_db()
+        return req
+
+    def test_stats_range_scopes_total_but_overdue_is_current_state(self):
+        now = timezone.now()
+        self._make(status='PENDING')                                                    # this month
+        self._make(status='APPROVED', created_at=now - timedelta(days=60),              # 2 months old + overdue
+                   expected_return=now - timedelta(days=10))
+        self.client.force_authenticate(self.staff)
+
+        month = self.client.get('/api/requests/stats/?range=month')
+        all_time = self.client.get('/api/requests/stats/?range=all')
+
+        self.assertEqual(month.status_code, 200)
+        self.assertEqual(month.data['total'], 1)            # 60-day-old request excluded by range
+        self.assertEqual(all_time.data['total'], 2)
+        self.assertEqual(month.data['overdue'], 1)          # overdue is NOT range-scoped
+        self.assertEqual(month.data['range'], 'month')
+
+    def test_stats_approval_rate_and_strict_approved(self):
+        for st in ['APPROVED', 'COMPLETED', 'RETURNED', 'REJECTED', 'PENDING']:
+            self._make(status=st)
+        self.client.force_authenticate(self.staff)
+        resp = self.client.get('/api/requests/stats/?range=all')
+        self.assertEqual(resp.data['approvalRate'], 75)     # 3 approved-set / 4 decided
+        self.assertEqual(resp.data['approved'], 1)          # 'approved' stays strict (APPROVED only)
+
+    def test_popular_items_groups_by_item_and_sums_quantity(self):
+        self._make(item=self.item_a, item_name='Projector', quantity=2)
+        self._make(item=self.item_a, item_name='Projector', quantity=3)
+        self._make(item=self.item_b, item_name='Camera', quantity=1)
+        self.client.force_authenticate(self.staff)
+        resp = self.client.get('/api/requests/popular_items/?range=all')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 2)
+        self.assertEqual(resp.data[0]['name'], 'Projector')
+        self.assertEqual(resp.data[0]['count'], 5)          # 2 + 3
+        self.assertEqual(resp.data[1]['name'], 'Camera')
+
+    def test_popular_items_groups_across_rename(self):
+        self._make(item=self.item_a, item_name='Old Name', quantity=2)
+        self._make(item=self.item_a, item_name='Older Name', quantity=1)
+        self.item_a.name = 'Projector HD'
+        self.item_a.save(update_fields=['name'])
+        self.client.force_authenticate(self.staff)
+        resp = self.client.get('/api/requests/popular_items/?range=all')
+        self.assertEqual(len(resp.data), 1)                 # one group by item_id
+        self.assertEqual(resp.data[0]['name'], 'Projector HD')   # current name, not snapshot
+        self.assertEqual(resp.data[0]['count'], 3)
+
+    def test_overdue_grouped_by_borrower(self):
+        now = timezone.now()
+        self._make(requested_by=self.s1, status='APPROVED', expected_return=now - timedelta(days=5))
+        self._make(requested_by=self.s1, status='APPROVED', expected_return=now - timedelta(days=12))
+        self._make(requested_by=self.s2, status='APPROVED', expected_return=now - timedelta(days=3))
+        self._make(requested_by=self.s2, status='APPROVED', expected_return=now + timedelta(days=3))   # not due
+        self._make(requested_by=self.s1, status='PENDING')                                             # not outstanding
+        self.client.force_authenticate(self.staff)
+        resp = self.client.get('/api/requests/overdue_grouped/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 2)
+        self.assertEqual(resp.data[0]['borrowerName'], 'Ana Cruz')   # sorted by maxDaysOverdue desc
+        self.assertEqual(resp.data[0]['count'], 2)
+        self.assertEqual(resp.data[0]['maxDaysOverdue'], 12)
+        self.assertEqual(resp.data[1]['borrowerName'], 'Ben Reyes')
+        self.assertEqual(resp.data[1]['count'], 1)
+        self.assertEqual(sum(g['count'] for g in resp.data), 3)
+
+    def test_overdue_grouped_search_matches_borrower_and_item(self):
+        now = timezone.now()
+        self._make(requested_by=self.s1, item=self.item_a, item_name='Projector',
+                   status='APPROVED', expected_return=now - timedelta(days=5))
+        self._make(requested_by=self.s2, item=self.item_b, item_name='Camera',
+                   status='APPROVED', expected_return=now - timedelta(days=5))
+        self.client.force_authenticate(self.staff)
+        by_borrower = self.client.get('/api/requests/overdue_grouped/?search=Ana')
+        self.assertEqual(len(by_borrower.data), 1)
+        self.assertEqual(by_borrower.data[0]['borrowerName'], 'Ana Cruz')
+        by_item = self.client.get('/api/requests/overdue_grouped/?search=Camera')
+        self.assertEqual(len(by_item.data), 1)
+        self.assertEqual(by_item.data[0]['borrowerName'], 'Ben Reyes')

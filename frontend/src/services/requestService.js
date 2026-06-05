@@ -51,8 +51,31 @@ const requestService = {
         return response.data;
     },
 
-    getStats: async () => {
-        const response = await api.get('/requests/stats/');
+    getStats: async (range) => {
+        // Reports passes a range (+ includes cleared history for accurate period
+        // totals); the Requests page calls it with no args → active set, as before.
+        const params = new URLSearchParams();
+        if (range) { params.append('range', range); params.append('include_cleared', 'true'); }
+        const qs = params.toString();
+        const response = await api.get(`/requests/stats/${qs ? `?${qs}` : ''}`);
+        return response.data;
+    },
+
+    // Top requested items for the Reports chart (server-aggregated, period-scoped).
+    getPopularItems: async (range) => {
+        const params = new URLSearchParams();
+        if (range) params.append('range', range);
+        params.append('include_cleared', 'true');
+        const response = await api.get(`/requests/popular_items/?${params.toString()}`);
+        return response.data;
+    },
+
+    // Overdue requests grouped by borrower for the Reports overdue panel.
+    getOverdueGrouped: async (search = '') => {
+        const params = new URLSearchParams();
+        if (search) params.append('search', search);
+        const qs = params.toString();
+        const response = await api.get(`/requests/overdue_grouped/${qs ? `?${qs}` : ''}`);
         return response.data;
     },
 

@@ -37,7 +37,7 @@ const useInventory = () => {
             const categories = new Set(items.map(i => i.category));
             setStats({
                 total: items.length,
-                available: items.filter(i => i.status === 'AVAILABLE').length,
+                available: items.filter(i => i.status === 'AVAILABLE' && i.quantity > 0).length,
                 inUse: items.filter(i => i.status === 'IN_USE').length,
                 maintenance: items.filter(i => i.status === 'MAINTENANCE').length,
                 retired: items.filter(i => i.status === 'RETIRED').length,

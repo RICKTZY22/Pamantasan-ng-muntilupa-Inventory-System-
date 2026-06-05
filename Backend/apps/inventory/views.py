@@ -177,7 +177,7 @@ class ItemViewSet(viewsets.ModelViewSet):
         threshold = Item.get_low_stock_threshold()
         return queryset.aggregate(
             total=Count('id'),
-            available=Count('id', filter=Q(status='AVAILABLE')),
+            available=Count('id', filter=Q(status='AVAILABLE', quantity__gt=0)),
             inUse=Count('id', filter=Q(status='IN_USE')),
             maintenance=Count('id', filter=Q(status='MAINTENANCE')),
             retired=Count('id', filter=Q(status='RETIRED')),

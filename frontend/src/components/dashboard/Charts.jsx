@@ -132,7 +132,13 @@ export const BarChartComponent = ({ data, dataKey, bars, xAxisKey, title }) => (
                                 maxBarSize={38}
                                 animationDuration={800}
                                 animationEasing="ease-out"
-                            />
+                            >
+                                {/* Single series, no explicit color → one palette color per category. */}
+                                {bars.length === 1 && !bar.color &&
+                                    data.map((entry, i) => (
+                                        <Cell key={`cell-${i}`} fill={COLORS[i % COLORS.length]} />
+                                    ))}
+                            </Bar>
                         ))}
                     </>
                 ) : (

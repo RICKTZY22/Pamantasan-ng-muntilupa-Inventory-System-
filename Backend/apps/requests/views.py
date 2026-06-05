@@ -1,8 +1,10 @@
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from datetime import timedelta
+
 from django.db import transaction
-from django.db.models import Q, F, Count, Case, When, IntegerField, Value
+from django.db.models import Q, F, Count, Case, When, IntegerField, Value, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
@@ -17,6 +19,27 @@ from .notifications import create_notif_if_new, notify_many
 from .overdue import OUTSTANDING_STATUSES, run_overdue_scan
 from apps.authentication.models import User, AuditLog, log_action
 from apps.permissions import IsStaffOrAbove, IsAdmin
+
+
+def get_range_start(range_key):
+    """Local-time start datetime for a dashboard range key, or None for 'all'.
+    Single source of truth for period boundaries (week starts Sunday)."""
+    now_local = timezone.localtime()
+
+    def _midnight(d):
+        return d.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if range_key == 'week':
+        return _midnight(now_local - timedelta(days=(now_local.weekday() + 1) % 7))
+    if range_key == 'month':
+        return _midnight(now_local.replace(day=1))
+    if range_key == 'quarter':
+        q_month = ((now_local.month - 1) // 3) * 3 + 1
+        return _midnight(now_local.replace(month=q_month, day=1))
+    if range_key == 'year':
+        return _midnight(now_local.replace(month=1, day=1))
+    return None
+
 
 class RequestViewSet(viewsets.ModelViewSet):
     # State changes use explicit actions, not generic PATCH/DELETE.
@@ -82,6 +105,18 @@ class RequestViewSet(viewsets.ModelViewSet):
         ).order_by('-_priority_order', '-created_at')
 
         return queryset.select_related('requested_by', 'approved_by', 'item')
+
+    def _report_base_qs(self):
+        """Role-scoped base queryset for the aggregation actions (stats /
+        popular_items / overdue_grouped), WITHOUT the list-view query-param
+        filters (status/search/overdue/mine) that get_queryset applies — so the
+        overdue panel's ?search= isn't hijacked by the list's item/purpose search,
+        and no inherited order_by leaks into GROUP BY."""
+        include_cleared = self.request.query_params.get('include_cleared', '').lower() == 'true'
+        qs = Request.objects.all() if include_cleared else Request.objects.filter(is_cleared=False)
+        if not self.request.user.has_min_role('STAFF'):
+            qs = qs.filter(requested_by=self.request.user)
+        return qs
 
     def create(self, request, *args, **kwargs):
         # Flagged users have unreturned overdue items. Block new requests until
@@ -474,17 +509,35 @@ class RequestViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def stats(self, request):
         # One aggregate query with conditional counts instead of 7 round-trips.
-        overdue_q = Q(status__in=OUTSTANDING_STATUSES, expected_return__lt=timezone.now())
-        stats = self.get_queryset().aggregate(
+        # Period-scope the request counts by ?range= (week/month/quarter/year/all).
+        # 'overdue' is a current-state metric and is never range-scoped.
+        qs = self._report_base_qs()
+        range_key = request.query_params.get('range', 'all')
+        start = get_range_start(range_key)
+        period_qs = qs if start is None else qs.filter(created_at__gte=start)
+
+        APPROVED_SET = ['APPROVED', 'COMPLETED', 'RETURNED']
+        DECIDED_EXTRA = ['REJECTED', 'CANCELLED']
+        agg = period_qs.aggregate(
             total=Count('id'),
             pending=Count('id', filter=Q(status='PENDING')),
             approved=Count('id', filter=Q(status='APPROVED')),
             completed=Count('id', filter=Q(status='COMPLETED')),
             rejected=Count('id', filter=Q(status='REJECTED')),
             returned=Count('id', filter=Q(status='RETURNED')),
-            overdue=Count('id', filter=overdue_q),
+            _approved_set=Count('id', filter=Q(status__in=APPROVED_SET)),
+            _decided_extra=Count('id', filter=Q(status__in=DECIDED_EXTRA)),
         )
-        return Response(stats)
+        approved_set = agg.pop('_approved_set')
+        decided_total = approved_set + agg.pop('_decided_extra')
+        # Approval rate = approved (incl. completed/returned) vs all decided requests.
+        agg['approvalRate'] = round(approved_set / decided_total * 100) if decided_total else 0
+        agg['overdue'] = qs.filter(
+            status__in=OUTSTANDING_STATUSES,
+            expected_return__lt=timezone.now(),
+        ).count()
+        agg['range'] = range_key
+        return Response(agg)
 
     @action(detail=False, methods=['post'], permission_classes=[IsAdmin])
     def clear_history(self, request):
@@ -574,6 +627,73 @@ class RequestViewSet(viewsets.ModelViewSet):
         it for scheduled runs."""
         result = run_overdue_scan()
         return Response({'status': f"{result['notified']} overdue notifications created"})
+
+    @action(detail=False, methods=['get'])
+    def popular_items(self, request):
+        """Top requested items in the selected range, grouped by item (stable
+        across renames). Sums requested quantity. Feeds the Reports chart."""
+        qs = self._report_base_qs()
+        start = get_range_start(request.query_params.get('range', 'all'))
+        if start is not None:
+            qs = qs.filter(created_at__gte=start)
+        rows = (
+            qs.values('item_id', 'item__name')
+              .annotate(count=Sum('quantity'))
+              .order_by('-count')[:8]
+        )
+        return Response([
+            {
+                'itemId': r['item_id'],
+                'name': r['item__name'] or 'Unknown',
+                'count': r['count'] or 0,
+            }
+            for r in rows
+        ])
+
+    @action(detail=False, methods=['get'])
+    def overdue_grouped(self, request):
+        """Overdue outstanding requests grouped by borrower, for the Reports
+        overdue panel. Optional ?search= matches borrower name or item name."""
+        now = timezone.now()
+        qs = (
+            self._report_base_qs()
+            .filter(status__in=OUTSTANDING_STATUSES, expected_return__lt=now)
+            .select_related('requested_by')
+        )
+        search = request.query_params.get('search', '').strip()
+        if search:
+            qs = qs.filter(
+                Q(requested_by__first_name__icontains=search) |
+                Q(requested_by__last_name__icontains=search) |
+                Q(requested_by__username__icontains=search) |
+                Q(item_name__icontains=search)
+            )
+        groups = {}
+        for req in qs.order_by('expected_return'):
+            borrower = req.requested_by
+            group = groups.get(borrower.id)
+            if group is None:
+                group = {
+                    'borrowerId': borrower.id,
+                    'borrowerName': borrower.get_full_name() or borrower.username,
+                    'studentId': getattr(borrower, 'student_id', '') or '',
+                    'count': 0,
+                    'maxDaysOverdue': 0,
+                    'items': [],
+                }
+                groups[borrower.id] = group
+            days_overdue = (now - req.expected_return).days
+            group['count'] += 1
+            group['maxDaysOverdue'] = max(group['maxDaysOverdue'], days_overdue)
+            group['items'].append({
+                'id': req.id,
+                'itemName': req.item_name,
+                'quantity': req.quantity,
+                'expectedReturn': req.expected_return.isoformat(),
+                'daysOverdue': days_overdue,
+                'status': req.status,
+            })
+        return Response(sorted(groups.values(), key=lambda g: g['maxDaysOverdue'], reverse=True))
 
 
 class NotificationViewSet(viewsets.ModelViewSet):

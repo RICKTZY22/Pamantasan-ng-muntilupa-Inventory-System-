@@ -28,6 +28,8 @@ const useRequests = () => {
     const [selectedRequest, setSelectedRequest] = useState(null);
     const [stats, setStats] = useState(buildStats([]));
     const [totalCount, setTotalCount] = useState(0);
+    const [popularItems, setPopularItems] = useState([]);
+    const [overdueGroups, setOverdueGroups] = useState([]);
 
     const clearError = useCallback(() => setError(null), []);
 
@@ -66,12 +68,29 @@ const useRequests = () => {
         }
     }, []);
 
-    const fetchStats = useCallback(async () => {
+    const fetchStats = useCallback(async (range) => {
         try {
-            const data = await requestService.getStats();
+            const data = await requestService.getStats(range);
             setStats(data);
         } catch (err) {
             // Stats are helpful, but not required for the page to work.
+        }
+    }, []);
+
+    // Reports-only: server-aggregated popular items + overdue grouped by borrower.
+    const fetchPopularItems = useCallback(async (range) => {
+        try {
+            setPopularItems(await requestService.getPopularItems(range));
+        } catch (err) {
+            setPopularItems([]);
+        }
+    }, []);
+
+    const fetchOverdueGrouped = useCallback(async (search = '') => {
+        try {
+            setOverdueGroups(await requestService.getOverdueGrouped(search));
+        } catch (err) {
+            setOverdueGroups([]);
         }
     }, []);
 
@@ -171,6 +190,10 @@ const useRequests = () => {
         fetchPage,
         totalCount,
         fetchStats,
+        popularItems,
+        overdueGroups,
+        fetchPopularItems,
+        fetchOverdueGrouped,
         createRequest,
         approveRequest,
         rejectRequest,

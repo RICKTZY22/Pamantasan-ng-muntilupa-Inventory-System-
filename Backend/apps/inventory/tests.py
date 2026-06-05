@@ -246,3 +246,29 @@ class ItemStatusWriteProtectionTests(APITestCase):
         self.client.patch(f'/api/inventory/{item.id}/', {'status': Item.Status.RETIRED}, format='json')
         item.refresh_from_db()
         self.assertEqual(item.status, Item.Status.AVAILABLE)
+
+
+class InventoryStatsAvailableTests(APITestCase):
+    """'available' must count only AVAILABLE items that are actually in stock
+    (quantity > 0), matching what the Reports 'Available items' card shows."""
+
+    def setUp(self):
+        self.staff = get_user_model().objects.create_user(
+            username='stats_staff', password='password', role='STAFF',
+        )
+        self.client.force_authenticate(self.staff)
+
+    def test_available_excludes_zero_quantity_and_non_available(self):
+        Item.objects.create(name='In Stock', category=Item.Category.ELECTRONICS,
+                            quantity=3, status=Item.Status.AVAILABLE, access_level='STUDENT')
+        Item.objects.create(name='Zero Stock', category=Item.Category.ELECTRONICS,
+                            quantity=0, status=Item.Status.AVAILABLE, access_level='STUDENT')
+        Item.objects.create(name='Busy', category=Item.Category.ELECTRONICS,
+                            quantity=2, status=Item.Status.IN_USE, access_level='STUDENT')
+
+        resp = self.client.get('/api/inventory/stats/')
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['total'], 3)
+        self.assertEqual(resp.data['available'], 1)   # only the in-stock AVAILABLE item
+        self.assertEqual(resp.data['outOfStock'], 1)
