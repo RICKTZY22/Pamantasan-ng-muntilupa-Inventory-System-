@@ -4,12 +4,14 @@ import tempfile
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import override_settings
+from django.test import TestCase, override_settings
 from PIL import Image as PILImage
 from rest_framework import status
 from rest_framework.test import APITestCase, APIClient
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.authentication.models import AuditLog
+from apps.authentication.serializers import ProfileUpdateSerializer, UserSerializer
 
 User = get_user_model()
 
@@ -125,6 +127,27 @@ class RegistrationRoleTests(APITestCase):
         self.assertEqual(response.data['user']['role'], User.Role.STAFF)
 
 
+class ProfileCreditScoreTests(APITestCase):
+    def test_profile_exposes_credit_score_read_only_fields(self):
+        user = User.objects.create_user(
+            username='scoreuser',
+            email='scoreuser@plmun.edu.ph',
+            password='StrongPass123!',
+            role=User.Role.STUDENT,
+            credit_score=87,
+            overdue_count=2,
+            early_return_count=4,
+        )
+        self.client.force_authenticate(user)
+
+        response = self.client.get('/api/auth/profile/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['creditScore'], 87)
+        self.assertEqual(response.data['overdueCount'], 2)
+        self.assertEqual(response.data['earlyReturnCount'], 4)
+
+
 class MaintenanceModeTests(APITestCase):
     def setUp(self):
         cache.delete('plmun_maintenance')
@@ -134,10 +157,35 @@ class MaintenanceModeTests(APITestCase):
             password='StrongPass123!',
             role=User.Role.ADMIN,
         )
+        self.staff = User.objects.create_user(
+            username='maint-staff',
+            email='maint-staff@plmun.edu.ph',
+            password='StrongPass123!',
+            role=User.Role.STAFF,
+        )
+        self.student = User.objects.create_user(
+            username='maint-student',
+            email='maint-student@plmun.edu.ph',
+            password='StrongPass123!',
+            role=User.Role.STUDENT,
+        )
         self.client.force_authenticate(self.admin)
 
     def tearDown(self):
         cache.delete('plmun_maintenance')
+
+    def _client_for(self, user):
+        client = APIClient()
+        token = RefreshToken.for_user(user).access_token
+        client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+        return client
+
+    def test_maintenance_status_requires_authentication(self):
+        self.client.force_authenticate(user=None)
+
+        response = self.client.get('/api/auth/maintenance/')
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_invalid_duration_returns_400_instead_of_server_error(self):
         response = self.client.post('/api/auth/maintenance/', {
@@ -181,6 +229,30 @@ class MaintenanceModeTests(APITestCase):
         self.assertTrue(response.data['enabled'])
         self.assertGreater(response.data['endTime'], 0)
         self.assertIsNotNone(cache.get('plmun_maintenance'))
+
+    def test_student_api_is_blocked_during_maintenance(self):
+        cache.set('plmun_maintenance', {'enabled': True, 'endTime': 9999999999999}, timeout=60)
+
+        response = self._client_for(self.student).get('/api/auth/profile/')
+
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertIn('maintenance', response.json()['detail'].lower())
+
+    def test_student_can_still_check_maintenance_status(self):
+        cache.set('plmun_maintenance', {'enabled': True, 'endTime': 9999999999999}, timeout=60)
+
+        response = self._client_for(self.student).get('/api/auth/maintenance/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['enabled'])
+
+    def test_staff_api_is_allowed_during_maintenance(self):
+        cache.set('plmun_maintenance', {'enabled': True, 'endTime': 9999999999999}, timeout=60)
+
+        response = self._client_for(self.staff).get('/api/auth/profile/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['role'], User.Role.STAFF)
 
 
 @override_settings(MEDIA_ROOT=tempfile.mkdtemp())
@@ -266,3 +338,54 @@ class AuditLogViewTests(APITestCase):
         self.assertEqual(self.client.delete('/api/auth/audit-logs/').status_code, status.HTTP_403_FORBIDDEN)
         self.client.force_authenticate(self.admin)
         self.assertEqual(self.client.delete('/api/auth/audit-logs/').status_code, status.HTTP_200_OK)
+
+
+class CreditScoreModelTests(TestCase):
+    """apply_credit_change clamps to [0, 100] and disables only non-staff borrowers."""
+
+    def test_clamps_to_floor_and_ceiling(self):
+        floor_user = User.objects.create_user(username='credit-floor', password='x', role=User.Role.STAFF)
+        self.assertEqual(floor_user.apply_credit_change(-500), 0)
+
+        ceil_user = User.objects.create_user(username='credit-ceil', password='x', role=User.Role.STUDENT)
+        ceil_user.credit_score = 90
+        self.assertEqual(ceil_user.apply_credit_change(+500), 100)
+
+    def test_non_staff_disabled_at_threshold(self):
+        u = User.objects.create_user(username='credit-student', password='x', role=User.Role.STUDENT)
+        u.apply_credit_change(-25)  # 100 -> 75 (== disable threshold)
+        self.assertEqual(u.credit_score, 75)
+        self.assertFalse(u.is_active)
+
+    def test_staff_not_disabled_below_threshold(self):
+        u = User.objects.create_user(username='credit-staff', password='x', role=User.Role.STAFF)
+        u.apply_credit_change(-60)  # 100 -> 40, but staff are never auto-disabled
+        self.assertEqual(u.credit_score, 40)
+        self.assertTrue(u.is_active)
+
+    def test_counters_and_flag(self):
+        u = User.objects.create_user(username='credit-counters', password='x', role=User.Role.STUDENT)
+        u.apply_credit_change(-5, late_incidents=1)
+        self.assertEqual(u.overdue_count, 1)
+        self.assertTrue(u.is_flagged)
+        u.apply_credit_change(+3, early_returns=2)
+        self.assertEqual(u.early_return_count, 2)
+
+
+class AvatarValidationBypassTests(TestCase):
+    """Profile-update and admin user-update serializers must run avatars through
+    the shared image validator (closing the upload-validation bypass)."""
+
+    @staticmethod
+    def _bad_file():
+        return SimpleUploadedFile('avatar.png', b'definitely not an image', content_type='image/png')
+
+    def test_profile_update_serializer_rejects_non_image(self):
+        s = ProfileUpdateSerializer(data={'avatar': self._bad_file()}, partial=True)
+        self.assertFalse(s.is_valid())
+        self.assertIn('avatar', s.errors)
+
+    def test_user_serializer_rejects_non_image(self):
+        s = UserSerializer(data={'avatar': self._bad_file()}, partial=True)
+        self.assertFalse(s.is_valid())
+        self.assertIn('avatar', s.errors)

@@ -4,11 +4,16 @@ from io import StringIO
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.db import IntegrityError, transaction
+from unittest.mock import patch
+
+from django.core.cache import cache
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
+from apps.authentication.models import AuditLog
 from apps.inventory.models import Item
+from apps.requests import auto_decision as ad
 from apps.requests.models import Notification, Request
 from apps.requests.notifications import create_notif_if_new, notify_many
 from apps.requests.overdue import run_overdue_scan
@@ -232,6 +237,54 @@ class ReturnHandshakeTests(APITestCase):
         self.assertEqual(self.req.status, 'APPROVED')
         self.assertIsNone(self.req.return_requested_at)
 
+    def test_admin_request_return_does_not_notify_self(self):
+        admin = get_user_model().objects.create_user(
+            username='admin_returner',
+            password='password',
+            role='ADMIN',
+            first_name='Demo',
+            last_name='Admin',
+        )
+        req = Request.objects.create(
+            item=self.item, item_name=self.item.name, requested_by=admin,
+            quantity=1, purpose='Admin borrow', status='APPROVED',
+        )
+
+        self.client.force_authenticate(admin)
+        resp = self.client.post(f'/api/requests/{req.id}/request_return/')
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(Notification.objects.filter(recipient=admin, request=req).exists())
+        self.assertTrue(Notification.objects.filter(recipient=self.staff, request=req).exists())
+
+    def test_completed_returnable_request_cannot_be_returned_again(self):
+        self.req.status = 'COMPLETED'
+        self.req.returned_at = timezone.now()
+        self.req.return_confirmed_by = self.staff
+        self.req.save(update_fields=['status', 'returned_at', 'return_confirmed_by'])
+
+        self.client.force_authenticate(self.student)
+        resp = self.client.post(f'/api/requests/{self.req.id}/request_return/')
+
+        self.req.refresh_from_db(); self.item.refresh_from_db()
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(self.req.status, 'COMPLETED')
+        self.assertEqual(self.item.quantity, 1)
+
+    def test_completed_filter_includes_legacy_returned_rows(self):
+        legacy = Request.objects.create(
+            item=self.item, item_name=self.item.name, requested_by=self.student,
+            quantity=1, purpose='Legacy', status='RETURNED',
+            returned_at=timezone.now(), return_confirmed_by=self.staff,
+        )
+        self.client.force_authenticate(self.staff)
+
+        resp = self.client.get('/api/requests/?completed=true')
+
+        self.assertEqual(resp.status_code, 200)
+        ids = {row['id'] for row in resp.data['results']}
+        self.assertIn(legacy.id, ids)
+
     def test_nonreturnable_complete_second_click_sees_locked_state(self):
         consumable = Item.objects.create(
             name='Bond Paper', category=Item.Category.SUPPLIES, quantity=0,
@@ -241,13 +294,134 @@ class ReturnHandshakeTests(APITestCase):
             item=consumable, item_name=consumable.name, requested_by=self.student,
             quantity=1, purpose='Class', status='APPROVED',
         )
-        self.client.force_authenticate(self.student)
+        self.client.force_authenticate(self.staff)
         first = self.client.post(f'/api/requests/{req.id}/complete/')
         second = self.client.post(f'/api/requests/{req.id}/complete/')
         req.refresh_from_db()
         self.assertEqual(first.status_code, 200)
         self.assertEqual(second.status_code, 400)
         self.assertEqual(req.status, 'COMPLETED')
+
+    def test_student_cannot_complete_their_own_nonreturnable_request(self):
+        consumable = Item.objects.create(
+            name='Marker', category=Item.Category.SUPPLIES, quantity=4,
+            status=Item.Status.AVAILABLE, access_level='STUDENT', is_returnable=False,
+        )
+        req = Request.objects.create(
+            item=consumable, item_name=consumable.name, requested_by=self.student,
+            quantity=1, purpose='Class', status='APPROVED',
+        )
+        self.client.force_authenticate(self.student)
+
+        resp = self.client.post(f'/api/requests/{req.id}/complete/')
+
+        req.refresh_from_db()
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(req.status, 'APPROVED')
+
+    def test_returnable_request_cannot_be_completed_directly(self):
+        self.client.force_authenticate(self.staff)
+
+        resp = self.client.post(f'/api/requests/{self.req.id}/complete/')
+
+        self.req.refresh_from_db()
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(self.req.status, 'APPROVED')
+
+    def test_confirmed_early_return_adds_credit_points(self):
+        self.student.credit_score = 90
+        self.student.save(update_fields=['credit_score'])
+        self.req.expected_return = timezone.now() + timedelta(days=2)
+        self.req.save(update_fields=['expected_return'])
+
+        self.client.force_authenticate(self.student)
+        self.client.post(f'/api/requests/{self.req.id}/request_return/')
+        self.client.force_authenticate(self.staff)
+        resp = self.client.post(f'/api/requests/{self.req.id}/confirm_return/')
+
+        self.student.refresh_from_db()
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self.student.credit_score, 92)
+        self.assertEqual(self.student.early_return_count, 1)
+
+    def test_confirmed_late_return_deducts_credit_and_can_disable_account(self):
+        self.student.credit_score = 80
+        self.student.save(update_fields=['credit_score'])
+        self.req.expected_return = timezone.now() - timedelta(days=2)
+        self.req.save(update_fields=['expected_return'])
+
+        self.client.force_authenticate(self.student)
+        self.client.post(f'/api/requests/{self.req.id}/request_return/')
+        self.client.force_authenticate(self.staff)
+        resp = self.client.post(f'/api/requests/{self.req.id}/confirm_return/')
+
+        self.student.refresh_from_db()
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self.student.credit_score, 75)
+        self.assertEqual(self.student.overdue_count, 1)
+        self.assertFalse(self.student.is_active)
+
+
+class RequestApprovalLifecycleTests(APITestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.student = User.objects.create_user(username='life_stu', password='password', role='STUDENT')
+        self.staff = User.objects.create_user(username='life_staff', password='password', role='STAFF')
+        self.returnable = Item.objects.create(
+            name='Laptop', category=Item.Category.ELECTRONICS, quantity=3,
+            status=Item.Status.AVAILABLE, access_level='STUDENT', is_returnable=True,
+        )
+        self.nonreturnable = Item.objects.create(
+            name='Bond Paper', category=Item.Category.SUPPLIES, quantity=10,
+            status=Item.Status.AVAILABLE, access_level='STUDENT', is_returnable=False,
+        )
+
+    def _pending(self, item, qty=1):
+        return Request.objects.create(
+            item=item, item_name=item.name, requested_by=self.student,
+            quantity=qty, purpose='Class', status='PENDING',
+        )
+
+    def test_returnable_approval_stays_approved_and_reserves_stock(self):
+        req = self._pending(self.returnable, qty=1)
+        self.client.force_authenticate(self.staff)
+
+        resp = self.client.post(f'/api/requests/{req.id}/approve/')
+
+        req.refresh_from_db()
+        self.returnable.refresh_from_db()
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(req.status, 'APPROVED')
+        self.assertEqual(resp.data['status'], 'APPROVED')
+        self.assertEqual(self.returnable.quantity, 2)
+
+    def test_nonreturnable_approval_stays_approved_and_reserves_stock(self):
+        req = self._pending(self.nonreturnable, qty=3)
+        self.client.force_authenticate(self.staff)
+
+        resp = self.client.post(f'/api/requests/{req.id}/approve/')
+
+        req.refresh_from_db()
+        self.nonreturnable.refresh_from_db()
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(req.status, 'APPROVED')
+        self.assertEqual(resp.data['status'], 'APPROVED')
+        self.assertEqual(self.nonreturnable.quantity, 7)
+
+    def test_staff_can_complete_approved_nonreturnable_without_restoring_stock(self):
+        req = self._pending(self.nonreturnable, qty=2)
+        self.client.force_authenticate(self.staff)
+        self.client.post(f'/api/requests/{req.id}/approve/')
+        self.nonreturnable.refresh_from_db()
+        reserved_stock = self.nonreturnable.quantity
+
+        resp = self.client.post(f'/api/requests/{req.id}/complete/')
+
+        req.refresh_from_db()
+        self.nonreturnable.refresh_from_db()
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(req.status, 'COMPLETED')
+        self.assertEqual(self.nonreturnable.quantity, reserved_stock)
 
 
 class OverdueNotificationTests(APITestCase):
@@ -269,6 +443,25 @@ class OverdueNotificationTests(APITestCase):
             expected_return=timezone.now() - timedelta(days=1),
         )
 
+    def test_student_can_trigger_overdue_scan_and_credit_penalty(self):
+        req = self._overdue_request()
+        self.client.force_authenticate(self.student)
+
+        resp = self.client.post('/api/requests/check_overdue/')
+
+        self.assertEqual(resp.status_code, 200)
+        self.student.refresh_from_db()
+        self.assertTrue(self.student.is_flagged)
+        self.assertEqual(self.student.overdue_count, 1)
+        self.assertEqual(self.student.credit_score, 95)
+        self.assertTrue(
+            Notification.objects.filter(
+                recipient=self.student,
+                request=req,
+                type='OVERDUE',
+            ).exists()
+        )
+
     def test_confirm_return_deletes_overdue_notifications(self):
         req = self._overdue_request(status='RETURN_PENDING')
         Notification.objects.create(recipient=self.student, request=req, type='OVERDUE', message='overdue!')
@@ -278,6 +471,17 @@ class OverdueNotificationTests(APITestCase):
 
         self.assertEqual(resp.status_code, 200)
         self.assertFalse(Notification.objects.filter(request=req, type='OVERDUE').exists())
+
+    def test_completed_return_is_not_overdue(self):
+        req = self._overdue_request(status='RETURN_PENDING')
+
+        self.client.force_authenticate(self.staff)
+        self.client.post(f'/api/requests/{req.id}/confirm_return/')
+
+        req.refresh_from_db()
+        self.assertEqual(req.status, 'RETURNED')
+        self.assertFalse(RequestSerializer(req).data['isOverdue'])
+        self.assertEqual(run_overdue_scan()['overdue_total'], 0)
 
     def test_overdue_scan_does_not_duplicate_unread_alert(self):
         req = self._overdue_request()
@@ -289,6 +493,63 @@ class OverdueNotificationTests(APITestCase):
             Notification.objects.filter(recipient=self.student, request=req, type='OVERDUE').count(),
             1,
         )
+
+    def test_overdue_scan_deducts_credit_once_per_incident(self):
+        req = self._overdue_request()
+
+        run_overdue_scan()
+        self.student.refresh_from_db()
+        first_score = self.student.credit_score
+        first_count = self.student.overdue_count
+        run_overdue_scan()
+        self.student.refresh_from_db()
+
+        self.assertEqual(first_score, 95)
+        self.assertEqual(first_count, 1)
+        self.assertEqual(self.student.credit_score, 95)
+        self.assertEqual(self.student.overdue_count, 1)
+        self.assertEqual(
+            Notification.objects.filter(recipient=self.student, request=req, type='OVERDUE').count(),
+            1,
+        )
+
+    def test_overdue_penalty_survives_notification_deletion(self):
+        # P0: the penalty ledger must be a persistent Request field, not the
+        # (deletable) OVERDUE notification — else deleting it lets a rescan
+        # charge the same incident again.
+        req = self._overdue_request()
+        run_overdue_scan()
+        self.student.refresh_from_db()
+        self.assertEqual(self.student.credit_score, 95)
+        self.assertEqual(self.student.overdue_count, 1)
+
+        Notification.objects.filter(request=req, type='OVERDUE').delete()  # borrower clears it
+        run_overdue_scan()
+        self.student.refresh_from_db()
+        req.refresh_from_db()
+
+        self.assertEqual(self.student.credit_score, 95)   # NOT 90
+        self.assertEqual(self.student.overdue_count, 1)
+        self.assertTrue(req.overdue_penalty_applied)
+
+    def test_overdue_scan_then_confirm_return_charges_once(self):
+        # P0: scan charges the penalty; confirming a late return must NOT charge
+        # again (keyed on the persistent ledger, not the deletable notification).
+        req = self._overdue_request()
+        run_overdue_scan()
+        self.student.refresh_from_db()
+        self.assertEqual(self.student.credit_score, 95)
+
+        req.status = 'RETURN_PENDING'
+        req.save(update_fields=['status'])
+        Notification.objects.filter(request=req, type='OVERDUE').delete()  # cleared before return
+        self.client.force_authenticate(self.staff)
+        resp = self.client.post(f'/api/requests/{req.id}/confirm_return/')
+
+        self.assertEqual(resp.status_code, 200)
+        self.student.refresh_from_db()
+        self.assertEqual(self.student.credit_score, 95)   # NOT 90
+        self.assertEqual(self.student.overdue_count, 1)
 
     def test_unread_overdue_notification_has_database_guard(self):
         req = self._overdue_request()
@@ -317,6 +578,28 @@ class OverdueNotificationTests(APITestCase):
         out = StringIO()
         call_command('check_overdue', stdout=out)
         self.assertIn('Overdue scan complete', out.getvalue())
+
+
+class ExpectedReturnOwnershipTests(APITestCase):
+    """expectedReturn is server/staff-owned; a borrower cannot set it on create."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.student = User.objects.create_user(username='er_stu', password='password', role='STUDENT')
+        self.item = Item.objects.create(
+            name='Markers', category=Item.Category.SUPPLIES, quantity=5,
+            status=Item.Status.AVAILABLE, access_level='STUDENT', is_returnable=False,
+        )
+
+    def test_expected_return_ignored_on_create(self):
+        self.client.force_authenticate(self.student)
+        resp = self.client.post('/api/requests/', {
+            'item': self.item.id, 'quantity': 1, 'purpose': 'Class',
+            'expectedReturn': '2099-12-31T23:59:59Z',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        req = Request.objects.get(id=resp.data['id'])
+        self.assertIsNone(req.expected_return)   # borrower-supplied value ignored
 
 
 class NotifyManyTests(TestCase):
@@ -357,7 +640,15 @@ class RequestListFilterTests(APITestCase):
     def setUp(self):
         User = get_user_model()
         self.staff = User.objects.create_user(username='liststaff', password='password', role='STAFF')
-        self.student = User.objects.create_user(username='liststudent', password='password', role='STUDENT')
+        self.student = User.objects.create_user(
+            username='liststudent',
+            password='password',
+            role='STUDENT',
+            first_name='Mikaela',
+            last_name='Castro',
+            email='mikaela.castro.23149842@plmun.edu.ph',
+            student_id='23149842',
+        )
         self.item = Item.objects.create(
             name='Camera', category=Item.Category.ELECTRONICS, quantity=5,
             status=Item.Status.AVAILABLE, access_level='STUDENT',
@@ -388,6 +679,14 @@ class RequestListFilterTests(APITestCase):
         self.assertEqual(resp.data['count'], 1)
         self.assertTrue(all(r['status'] == 'APPROVED' for r in resp.data['results']))
 
+    def test_priority_filter(self):
+        self._make(priority='HIGH')
+        self._make(priority='LOW')
+        self.client.force_authenticate(self.staff)
+        resp = self.client.get('/api/requests/?priority=HIGH')
+        self.assertEqual(resp.data['count'], 1)
+        self.assertTrue(all(r['priority'] == 'HIGH' for r in resp.data['results']))
+
     def test_overdue_filter_uses_outstanding_and_due_date(self):
         self._make(status='APPROVED', expected_return=timezone.now() - timedelta(days=2))   # overdue
         self._make(status='APPROVED', expected_return=timezone.now() + timedelta(days=2))   # not yet due
@@ -413,6 +712,42 @@ class RequestListFilterTests(APITestCase):
         resp = self.client.get('/api/requests/')
         priorities = [r['priority'] for r in resp.data['results']]
         self.assertEqual(priorities, ['HIGH', 'MEDIUM', 'LOW'])
+
+    def test_staff_search_matches_borrower_identity_fields(self):
+        req = self._make(status='APPROVED')
+        self.client.force_authenticate(self.staff)
+
+        searches = ['Mikaela', 'Castro', 'Mikaela Castro', 'liststudent', '23149842', 'mikaela.castro']
+        for term in searches:
+            with self.subTest(term=term):
+                resp = self.client.get('/api/requests/', {'search': term})
+                self.assertEqual(resp.status_code, 200)
+                self.assertEqual(resp.data['count'], 1)
+                self.assertEqual(resp.data['results'][0]['id'], req.id)
+
+    def test_staff_search_does_not_match_item_name_or_purpose(self):
+        self._make(item_name='Camera', purpose='Capstone demo')
+        self.client.force_authenticate(self.staff)
+
+        by_item = self.client.get('/api/requests/', {'search': 'Camera'})
+        by_purpose = self.client.get('/api/requests/', {'search': 'Capstone'})
+
+        self.assertEqual(by_item.status_code, 200)
+        self.assertEqual(by_item.data['count'], 0)
+        self.assertEqual(by_purpose.data['count'], 0)
+
+    def test_student_search_still_matches_their_own_item_and_purpose(self):
+        req = self._make(item_name='Camera', purpose='Capstone demo')
+        self.client.force_authenticate(self.student)
+
+        by_item = self.client.get('/api/requests/', {'search': 'Camera'})
+        by_purpose = self.client.get('/api/requests/', {'search': 'Capstone'})
+
+        self.assertEqual(by_item.status_code, 200)
+        self.assertEqual(by_item.data['count'], 1)
+        self.assertEqual(by_item.data['results'][0]['id'], req.id)
+        self.assertEqual(by_purpose.data['count'], 1)
+        self.assertEqual(by_purpose.data['results'][0]['id'], req.id)
 
 
 class RequestEndpointLockdownTests(APITestCase):
@@ -475,6 +810,110 @@ class NotificationApiTests(APITestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(Notification.objects.get().is_read)
+
+    def test_delete_removes_single_notification(self):
+        notification = Notification.objects.create(
+            recipient=self.user,
+            type='STATUS_CHANGE',
+            message='Delete me',
+        )
+
+        response = self.client.delete(f'/api/requests/notifications/{notification.id}/')
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(Notification.objects.filter(pk=notification.id).exists())
+
+    def test_clear_all_deletes_only_current_users_notifications(self):
+        User = get_user_model()
+        other = User.objects.create_user(
+            username='notify-other',
+            password='password',
+            role='STUDENT',
+        )
+        mine = Notification.objects.create(
+            recipient=self.user,
+            type='STATUS_CHANGE',
+            message='Mine',
+        )
+        theirs = Notification.objects.create(
+            recipient=other,
+            type='STATUS_CHANGE',
+            message='Theirs',
+        )
+
+        response = self.client.delete('/api/requests/notifications/clear_all/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Notification.objects.filter(pk=mine.id).exists())
+        self.assertTrue(Notification.objects.filter(pk=theirs.id).exists())
+
+
+class RequestClearNotificationCleanupTests(APITestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.student = User.objects.create_user(username='clear-stu', password='password', role='STUDENT')
+        self.staff = User.objects.create_user(username='clear-staff', password='password', role='STAFF')
+        self.admin = User.objects.create_user(username='clear-admin', password='password', role='ADMIN')
+        self.item = Item.objects.create(
+            name='Clear Camera',
+            category=Item.Category.ELECTRONICS,
+            quantity=2,
+            status=Item.Status.AVAILABLE,
+            access_level='STUDENT',
+        )
+
+    def _request(self, status='COMPLETED'):
+        return Request.objects.create(
+            item=self.item,
+            item_name=self.item.name,
+            requested_by=self.student,
+            quantity=1,
+            purpose='cleanup',
+            status=status,
+        )
+
+    def test_clear_completed_also_deletes_linked_notifications(self):
+        req = self._request(status='COMPLETED')
+        linked = Notification.objects.create(
+            recipient=self.student,
+            request=req,
+            type='STATUS_CHANGE',
+            message='Completed',
+        )
+        unrelated = Notification.objects.create(
+            recipient=self.student,
+            type='STATUS_CHANGE',
+            message='No request link',
+        )
+        self.client.force_authenticate(self.staff)
+
+        response = self.client.delete('/api/requests/clear_completed/')
+
+        req.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(req.is_cleared)
+        self.assertEqual(response.data['notificationsCleared'], 1)
+        self.assertFalse(Notification.objects.filter(pk=linked.id).exists())
+        self.assertTrue(Notification.objects.filter(pk=unrelated.id).exists())
+
+    def test_clear_history_deletes_linked_notifications_before_history_delete(self):
+        from django.core.cache import cache
+        cache.set('history_clear_code', '1234', timeout=None)
+        req = self._request(status='COMPLETED')
+        linked = Notification.objects.create(
+            recipient=self.student,
+            request=req,
+            type='STATUS_CHANGE',
+            message='Completed',
+        )
+        self.client.force_authenticate(self.admin)
+
+        response = self.client.post('/api/requests/clear_history/', {'code': '1234'}, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['notificationsCleared'], 1)
+        self.assertFalse(Request.objects.filter(pk=req.id).exists())
+        self.assertFalse(Notification.objects.filter(pk=linked.id).exists())
 
 
 class StricterRequestTests(APITestCase):
@@ -618,3 +1057,254 @@ class ReportAggregationTests(APITestCase):
         by_item = self.client.get('/api/requests/overdue_grouped/?search=Camera')
         self.assertEqual(len(by_item.data), 1)
         self.assertEqual(by_item.data[0]['borrowerName'], 'Ben Reyes')
+
+
+class AutoDecisionRuleTests(TestCase):
+    """Pure rule-engine tests (no DB / HTTP). Decisions are deterministic."""
+
+    def setUp(self):
+        self.config = dict(ad.DEFAULTS, mode='auto')  # enabled, default thresholds
+
+    def _eval(self, **kw):
+        base = dict(is_returnable=False, priority='LOW', quantity=1,
+                    active_borrows=0, daily_count=0, config=self.config,
+                    credit_score=100, overdue_count=0, stock=10)
+        base.update(kw)
+        return ad.evaluate(**base)
+
+    def test_consumable_within_cap_auto_approves(self):
+        self.assertEqual(self._eval(is_returnable=False, quantity=3).action, ad.AUTO_APPROVE)
+
+    def test_low_priority_returnable_auto_approves(self):
+        self.assertEqual(self._eval(is_returnable=True, priority='MEDIUM', quantity=2).action, ad.AUTO_APPROVE)
+
+    def test_high_priority_returnable_needs_review(self):
+        self.assertEqual(self._eval(is_returnable=True, priority='HIGH', quantity=1).action, ad.NEEDS_REVIEW)
+
+    def test_over_active_borrow_limit_rejects(self):
+        self.assertEqual(self._eval(active_borrows=5).action, ad.AUTO_REJECT)   # default limit 5
+
+    def test_qty_over_hard_cap_rejects(self):
+        self.assertEqual(self._eval(quantity=21).action, ad.AUTO_REJECT)        # default hard cap 20
+
+    def test_qty_above_auto_cap_under_hard_cap_needs_review(self):
+        self.assertEqual(self._eval(is_returnable=False, quantity=10).action, ad.NEEDS_REVIEW)
+
+    def test_daily_cap_reached_needs_review(self):
+        self.assertEqual(self._eval(daily_count=50).action, ad.NEEDS_REVIEW)    # default cap 50
+
+    def test_credit_below_perfect_needs_staff_review(self):
+        decision = self._eval(credit_score=95, overdue_count=1)
+        self.assertEqual(decision.action, ad.NEEDS_REVIEW)
+        self.assertIn('credit score', decision.reasons[0])
+
+    def test_disabled_credit_score_auto_rejects(self):
+        decision = self._eval(credit_score=75)
+        self.assertEqual(decision.action, ad.AUTO_REJECT)
+
+    def test_stock_shortage_auto_rejects_before_approval(self):
+        decision = self._eval(quantity=4, stock=3)
+        self.assertEqual(decision.action, ad.AUTO_REJECT)
+
+
+class AutoDecisionCreateTests(APITestCase):
+    """create() integration: the auto path reuses the approval/rejection helpers.
+    explain_decision is patched so tests never hit an LLM provider."""
+
+    def setUp(self):
+        User = get_user_model()
+        cache.clear()
+        self.student = User.objects.create_user(username='ad_stu', password='password', role='STUDENT')
+        self.admin = User.objects.create_user(username='ad_admin', password='password', role='ADMIN')
+        self.consumable = Item.objects.create(
+            name='Bond Paper', category=Item.Category.SUPPLIES, quantity=10,
+            status=Item.Status.AVAILABLE, access_level='STUDENT', is_returnable=False, priority='LOW',
+        )
+        self.high_returnable = Item.objects.create(
+            name='DSLR Camera', category=Item.Category.ELECTRONICS, quantity=2,
+            status=Item.Status.AVAILABLE, access_level='STUDENT', is_returnable=True, priority='HIGH',
+        )
+
+    def tearDown(self):
+        cache.clear()
+
+    def _submit(self, item, qty=1):
+        self.client.force_authenticate(self.student)
+        return self.client.post('/api/requests/', {
+            'item': item.id, 'quantity': qty, 'purpose': 'Class',
+        }, format='json')
+
+    @patch('apps.messaging.assistant.explain_decision', return_value='Rule explanation.')
+    def test_auto_mode_approves_consumable_and_decrements_stock(self, _mock):
+        ad.set_config({'mode': 'auto'})
+        resp = self._submit(self.consumable, qty=3)
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['status'], 'APPROVED')
+        self.assertTrue(resp.data['autoDecided'])
+        self.assertEqual(resp.data['autoRecommendation'], 'APPROVE')
+        self.consumable.refresh_from_db()
+        self.assertEqual(self.consumable.quantity, 7)        # 10 - 3 via reused helper
+        self.assertTrue(AuditLog.objects.filter(action=AuditLog.REQUEST_AUTO_APPROVED).exists())
+
+    @patch('apps.messaging.assistant.explain_decision', return_value='Rule explanation.')
+    def test_auto_mode_score_below_100_goes_to_staff_review(self, _mock):
+        ad.set_config({'mode': 'auto'})
+        self.student.credit_score = 95
+        self.student.overdue_count = 1
+        self.student.save(update_fields=['credit_score', 'overdue_count'])
+
+        resp = self._submit(self.consumable, qty=3)
+
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['status'], 'PENDING')
+        self.assertFalse(resp.data['autoDecided'])
+        self.assertEqual(resp.data['autoRecommendation'], 'REVIEW')
+        self.assertIn('credit score', resp.data['autoNote'])
+        self.consumable.refresh_from_db()
+        self.assertEqual(self.consumable.quantity, 10)
+
+    def test_credit_score_threshold_blocks_new_requests_and_disables_account(self):
+        self.student.credit_score = 75
+        self.student.save(update_fields=['credit_score'])
+
+        resp = self._submit(self.consumable, qty=1)
+
+        self.student.refresh_from_db()
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.data['code'], 'CREDIT_SCORE_DISABLED')
+        self.assertFalse(self.student.is_active)
+
+    @patch('apps.messaging.assistant.explain_decision', return_value='Rule explanation.')
+    def test_auto_mode_high_priority_returnable_stays_pending(self, _mock):
+        ad.set_config({'mode': 'auto'})
+        resp = self._submit(self.high_returnable, qty=1)
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['status'], 'PENDING')
+        self.assertFalse(resp.data['autoDecided'])
+        self.assertEqual(resp.data['autoRecommendation'], 'REVIEW')
+        self.high_returnable.refresh_from_db()
+        self.assertEqual(self.high_returnable.quantity, 2)   # unchanged
+
+    @patch('apps.messaging.assistant.explain_decision', return_value='Rule explanation.')
+    def test_auto_mode_rejects_over_active_limit(self, _mock):
+        ad.set_config({'mode': 'auto', 'max_active_borrows': 1})
+        Request.objects.create(
+            item=self.high_returnable, item_name=self.high_returnable.name,
+            requested_by=self.student, quantity=1, purpose='x', status='APPROVED',
+        )
+        resp = self._submit(self.consumable, qty=1)
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['status'], 'REJECTED')
+        self.assertTrue(resp.data['autoDecided'])
+        self.assertEqual(resp.data['autoRecommendation'], 'REJECT')
+        self.assertTrue(AuditLog.objects.filter(action=AuditLog.REQUEST_AUTO_REJECTED).exists())
+
+    def test_off_mode_leaves_request_pending(self):
+        resp = self._submit(self.consumable, qty=3)             # cache cleared → mode off
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['status'], 'PENDING')
+        self.assertFalse(resp.data['autoDecided'])
+        self.assertEqual(resp.data['autoRecommendation'], '')
+        self.consumable.refresh_from_db()
+        self.assertEqual(self.consumable.quantity, 10)          # unchanged
+
+    @patch('apps.messaging.assistant.explain_decision', return_value='Rule explanation.')
+    def test_suggest_mode_records_recommendation_without_executing(self, _mock):
+        ad.set_config({'mode': 'suggest'})
+        resp = self._submit(self.consumable, qty=3)
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['status'], 'PENDING')        # not executed
+        self.assertFalse(resp.data['autoDecided'])
+        self.assertEqual(resp.data['autoRecommendation'], 'APPROVE')
+        self.assertIn('Auto-approved', resp.data['autoNote'])   # deterministic note
+        self.consumable.refresh_from_db()
+        self.assertEqual(self.consumable.quantity, 10)          # unchanged
+
+    def test_ai_down_falls_back_to_templated_note(self):
+        from apps.messaging.assistant import AssistantUnavailable
+        ad.set_config({'mode': 'auto'})
+        with patch('apps.messaging.assistant._dispatch_prompt', side_effect=AssistantUnavailable('down')):
+            resp = self._submit(self.consumable, qty=2)
+        self.assertEqual(resp.status_code, 201)
+        self.assertTrue(resp.data['autoDecided'])               # decision stands despite AI being down
+        self.assertIn('Auto-approved', resp.data['autoNote'])   # deterministic templated fallback
+
+    @patch('apps.messaging.assistant.explain_decision', return_value='x')
+    def test_flagged_user_still_blocked(self, _mock):
+        ad.set_config({'mode': 'auto'})
+        self.student.is_flagged = True
+        self.student.save(update_fields=['is_flagged'])
+        resp = self._submit(self.consumable, qty=1)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_config_endpoint_is_admin_only(self):
+        self.client.force_authenticate(self.student)
+        denied = self.client.post('/api/requests/auto_decision_config/', {'mode': 'auto'}, format='json')
+        self.assertEqual(denied.status_code, 403)
+
+        self.client.force_authenticate(self.admin)
+        updated = self.client.post('/api/requests/auto_decision_config/',
+                                   {'mode': 'auto', 'max_auto_qty': 7}, format='json')
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.data['mode'], 'auto')
+        self.assertEqual(updated.data['max_auto_qty'], 7)
+        fetched = self.client.get('/api/requests/auto_decision_config/')
+        self.assertEqual(fetched.status_code, 200)
+        self.assertEqual(fetched.data['mode'], 'auto')
+
+
+class CascadeProtectionTests(APITestCase):
+    """Deleting an item or user that has borrow history must be refused (409),
+    never cascade-delete the request record."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.admin = User.objects.create_user(username='cp-admin', password='password', role='ADMIN')
+        self.staff = User.objects.create_user(username='cp-staff', password='password', role='STAFF')
+        self.borrower = User.objects.create_user(username='cp-borrower', password='password', role='STUDENT')
+        self.item = Item.objects.create(
+            name='Projector', category=Item.Category.ELECTRONICS, quantity=2,
+            status=Item.Status.AVAILABLE, access_level='STUDENT',
+        )
+        self.req = Request.objects.create(
+            item=self.item, item_name=self.item.name, requested_by=self.borrower,
+            quantity=1, purpose='x', status='COMPLETED',
+        )
+
+    def test_delete_user_with_history_returns_409(self):
+        self.client.force_authenticate(self.admin)
+        resp = self.client.delete(f'/api/users/{self.borrower.id}/')
+        self.assertEqual(resp.status_code, 409)
+        self.assertTrue(get_user_model().objects.filter(pk=self.borrower.pk).exists())
+        self.assertTrue(Request.objects.filter(pk=self.req.pk).exists())
+
+    def test_delete_item_with_history_returns_409(self):
+        self.client.force_authenticate(self.staff)
+        resp = self.client.delete(f'/api/inventory/{self.item.id}/')
+        self.assertEqual(resp.status_code, 409)
+        self.assertTrue(Item.objects.filter(pk=self.item.pk).exists())
+        self.assertTrue(Request.objects.filter(pk=self.req.pk).exists())
+
+
+class NotificationPatchLockdownTests(APITestCase):
+    """Generic PATCH must not let a user rewrite a notification's type/message."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(username='notif-patch', password='password', role='STUDENT')
+        self.client.force_authenticate(self.user)
+
+    def test_patch_cannot_change_type_or_message(self):
+        notif = Notification.objects.create(
+            recipient=self.user, type='STATUS_CHANGE', message='Original',
+        )
+        resp = self.client.patch(
+            f'/api/requests/notifications/{notif.id}/',
+            {'type': 'OVERDUE', 'message': 'Forged'}, format='json',
+        )
+        # Whether the route 405s or silently ignores the read-only fields, the
+        # stored type/message must be untouched.
+        self.assertIn(resp.status_code, (200, 403, 405))
+        notif.refresh_from_db()
+        self.assertEqual(notif.type, 'STATUS_CHANGE')
+        self.assertEqual(notif.message, 'Original')

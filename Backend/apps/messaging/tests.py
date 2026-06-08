@@ -28,10 +28,11 @@ class ConsumerResilienceTests(TestCase):
 
         self.assertEqual(_token_from_scope(scope), 'access-token-value')
 
-    def test_token_query_param_still_works_for_old_clients(self):
+    def test_token_query_param_is_rejected(self):
+        # Query-string tokens leak into logs; only the subprotocol is accepted.
         scope = {'subprotocols': [], 'query_string': b'token=legacy-token-value'}
 
-        self.assertEqual(_token_from_scope(scope), 'legacy-token-value')
+        self.assertIsNone(_token_from_scope(scope))
 
     def test_receive_json_swallows_handler_exceptions(self):
         consumer = ChatConsumer()
