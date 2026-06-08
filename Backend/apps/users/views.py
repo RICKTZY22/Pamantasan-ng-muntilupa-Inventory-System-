@@ -2,8 +2,9 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.contrib.auth import get_user_model
-from django.db.models import Count, Q
+from django.db.models import Count, Q, ProtectedError
 
+from apps.authentication.models import AuditLog, log_action
 from apps.authentication.serializers import UserSerializer
 from apps.permissions import IsAdmin
 
@@ -86,7 +87,10 @@ class UserViewSet(viewsets.ModelViewSet):
         
         user.role = new_role
         user.save()
-        
+
+        log_action(AuditLog.USER_UPDATED, user=request.user,
+                   details=f'Changed user {user.id} ({user.username}) role to {new_role}',
+                   request=request)
         return Response(UserSerializer(user).data)
     
     @action(detail=True, methods=['post'])
@@ -108,7 +112,10 @@ class UserViewSet(viewsets.ModelViewSet):
 
         user.is_active = not user.is_active
         user.save()
-        
+
+        log_action(AuditLog.USER_UPDATED, user=request.user,
+                   details=f'User {user.id} ({user.username}) {"activated" if user.is_active else "deactivated"}',
+                   request=request)
         return Response({
             'message': f'User {"activated" if user.is_active else "deactivated"}',
             'user': UserSerializer(user).data,
@@ -129,7 +136,18 @@ class UserViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        return super().destroy(request, *args, **kwargs)
+        uid, uname = user.pk, user.username
+        try:
+            response = super().destroy(request, *args, **kwargs)
+        except ProtectedError:
+            return Response(
+                {'error': 'This user has borrow-request history and cannot be deleted. '
+                          'Deactivate the account instead.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+        log_action(AuditLog.USER_DELETED, user=request.user,
+                   details=f'Deleted user {uid} ({uname})', request=request)
+        return response
 
     @action(detail=True, methods=['post'])
     def unflag(self, request, pk=None):

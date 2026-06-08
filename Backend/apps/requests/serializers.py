@@ -26,6 +26,9 @@ class RequestSerializer(serializers.ModelSerializer):
     borrowDuration = serializers.SerializerMethodField()
     borrowDurationUnit = serializers.SerializerMethodField()
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    autoRecommendation = serializers.CharField(source='auto_recommendation', read_only=True)
+    autoNote = serializers.CharField(source='auto_note', read_only=True)
+    autoDecided = serializers.BooleanField(source='auto_decided', read_only=True)
 
     class Meta:
         model = Request
@@ -35,6 +38,7 @@ class RequestSerializer(serializers.ModelSerializer):
             'approvedBy', 'approvedAt', 'rejectionReason', 'returnedAt',
             'returnRequestedAt', 'returnRequestedByName', 'returnConfirmedByName',
             'isReturnable', 'isOverdue', 'borrowDuration', 'borrowDurationUnit', 'createdAt',
+            'autoRecommendation', 'autoNote', 'autoDecided',
         ]
         read_only_fields = [
             'id', 'requestedBy', 'requestedById', 'requestedByStudentId',
@@ -46,6 +50,7 @@ class RequestSerializer(serializers.ModelSerializer):
             # State/identity fields only ever change via the action endpoints,
             # never a direct write — read-only as defense in depth.
             'status', 'priority', 'item', 'quantity',
+            'autoRecommendation', 'autoNote', 'autoDecided',
         ]
 
     def get_requestedBy(self, obj) -> str:
@@ -99,11 +104,12 @@ class RequestSerializer(serializers.ModelSerializer):
 class RequestCreateSerializer(serializers.ModelSerializer):
 
     itemName = serializers.CharField(source='item_name', required=False, allow_blank=True)
-    expectedReturn = serializers.DateTimeField(source='expected_return', required=False, allow_null=True)
 
     class Meta:
         model = Request
-        fields = ['item', 'itemName', 'quantity', 'purpose', 'expectedReturn']
+        # expectedReturn is intentionally NOT writable here — the due date is set
+        # server-side on staff approval, never by the borrower at creation.
+        fields = ['item', 'itemName', 'quantity', 'purpose']
 
     def validate_quantity(self, value):
         if value < 1:
@@ -172,6 +178,9 @@ class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
         fields = ['id', 'type', 'message', 'isRead', 'senderName', 'itemName', 'requestId', 'createdAt']
+        # System-generated: a user PATCH must not rewrite type/message; only the
+        # custom read() action flips is_read.
+        read_only_fields = ['type', 'message']
 
     def get_senderName(self, obj) -> Optional[str]:
         if obj.sender:

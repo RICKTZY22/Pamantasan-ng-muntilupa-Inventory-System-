@@ -5,6 +5,8 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.utils.crypto import constant_time_compare
 
+from apps.common.images import validate_image_upload
+
 User = get_user_model()
 logger = logging.getLogger(__name__)
 
@@ -16,6 +18,8 @@ class UserSerializer(serializers.ModelSerializer):
     isActive = serializers.BooleanField(source='is_active', read_only=True)
     isFlagged = serializers.BooleanField(source='is_flagged', read_only=True)
     overdueCount = serializers.IntegerField(source='overdue_count', read_only=True)
+    creditScore = serializers.IntegerField(source='credit_score', read_only=True)
+    earlyReturnCount = serializers.IntegerField(source='early_return_count', read_only=True)
 
     class Meta:
         model = User
@@ -23,7 +27,7 @@ class UserSerializer(serializers.ModelSerializer):
             'id', 'username', 'email', 'first_name', 'last_name', 'fullName',
             'role', 'department', 'student_id', 'avatar', 'avatarUrl', 'phone',
             'isActive', 'date_joined', 'last_login',
-            'isFlagged', 'overdueCount',
+            'isFlagged', 'overdueCount', 'creditScore', 'earlyReturnCount',
         ]
         # Role changes must pass through UserViewSet.role() so admin-safety
         # checks cannot be bypassed by the generic user update endpoint.
@@ -39,6 +43,13 @@ class UserSerializer(serializers.ModelSerializer):
         if request:
             return request.build_absolute_uri(obj.avatar.url)
         return obj.avatar.url
+
+    def validate_avatar(self, value):
+        if value:
+            error = validate_image_upload(value)
+            if error:
+                raise serializers.ValidationError(error)
+        return value
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -110,6 +121,13 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['first_name', 'last_name', 'fullName', 'department', 'phone', 'avatar']
+
+    def validate_avatar(self, value):
+        if value:
+            error = validate_image_upload(value)
+            if error:
+                raise serializers.ValidationError(error)
+        return value
 
     def update(self, instance, validated_data):
         full_name = validated_data.pop('fullName', None)

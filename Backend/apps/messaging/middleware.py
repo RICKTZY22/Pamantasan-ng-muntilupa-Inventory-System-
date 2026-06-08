@@ -1,5 +1,3 @@
-from urllib.parse import parse_qs
-
 from channels.db import database_sync_to_async
 from channels.middleware import BaseMiddleware
 from django.contrib.auth import get_user_model
@@ -27,9 +25,9 @@ def _token_from_scope(scope):
         if idx + 1 < len(protocols):
             return protocols[idx + 1]
 
-    # Backward compatibility for older clients.
-    qs = parse_qs(scope.get('query_string', b'').decode())
-    return (qs.get('token') or [None])[0]
+    # No query-string fallback: a token in the URL leaks into server/proxy logs
+    # and browser history. Clients must send it via the 'plmun.jwt' subprotocol.
+    return None
 
 
 class JWTAuthMiddleware(BaseMiddleware):

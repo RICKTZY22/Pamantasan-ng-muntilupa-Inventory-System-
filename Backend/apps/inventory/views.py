@@ -56,10 +56,18 @@ class ItemViewSet(viewsets.ModelViewSet):
         return Response(ItemSerializer(item).data)
 
     def destroy(self, request, *args, **kwargs):
+        from django.db.models import ProtectedError
         instance = self.get_object()
         item_name = instance.name
         item_id = instance.id
-        response = super().destroy(request, *args, **kwargs)
+        try:
+            response = super().destroy(request, *args, **kwargs)
+        except ProtectedError:
+            return Response(
+                {'error': 'This item has borrow-request history and cannot be deleted. '
+                          'Set its status to RETIRED instead.'},
+                status=status.HTTP_409_CONFLICT,
+            )
 
         log_action(AuditLog.ITEM_DELETED, user=request.user,
                    details=f'Deleted item "{item_name}" (id: {item_id})',
@@ -222,7 +230,7 @@ class ItemViewSet(viewsets.ModelViewSet):
             total=Count('id'),
             pending=Count('id', filter=Q(status='PENDING')),
             approved=Count('id', filter=Q(status='APPROVED')),
-            completed=Count('id', filter=Q(status='COMPLETED')),
+            completed=Count('id', filter=Q(status__in=['COMPLETED', 'RETURNED'])),
             rejected=Count('id', filter=Q(status='REJECTED')),
             returned=Count('id', filter=Q(status='RETURNED')),
             overdue=Count('id', filter=overdue_q),

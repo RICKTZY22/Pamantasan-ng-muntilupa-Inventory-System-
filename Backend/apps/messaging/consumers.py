@@ -73,7 +73,9 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
     def _load_conv(self, conv_id):
         return (
             Conversation.objects
-            .filter(pk=conv_id, members__user=self.user)
+            # Match REST visibility: a member who deleted the thread must not be
+            # able to revive it by posting from a stale socket.
+            .filter(pk=conv_id, members__user=self.user, members__deleted_at__isnull=True)
             .prefetch_related('members__user')
             .first()
         )

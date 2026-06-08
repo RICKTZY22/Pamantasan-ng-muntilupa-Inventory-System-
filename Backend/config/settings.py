@@ -73,6 +73,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'config.middleware.MaintenanceModeMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -176,6 +177,21 @@ CSRF_TRUSTED_ORIGINS = [
     'http://localhost:5173',
     'http://127.0.0.1:5173',
 ] + [origin.strip() for origin in _csrf_env.split(',') if origin.strip()]
+
+# Development convenience: the Vite dev server auto-bumps its port (5173 → 5174…)
+# when one is busy, which otherwise breaks CORS/CSRF. In DEBUG, accept any
+# localhost / 127.0.0.1 port. Production stays restricted to the configured list.
+if DEBUG:
+    CORS_ALLOWED_ORIGIN_REGEXES = [
+        r'^http://localhost:\d+$',
+        r'^http://127\.0\.0\.1:\d+$',
+    ]
+    _dev_origins = [
+        f'{host}:{port}'
+        for host in ('http://localhost', 'http://127.0.0.1')
+        for port in range(5173, 5181)
+    ]
+    CSRF_TRUSTED_ORIGINS = list(dict.fromkeys(CSRF_TRUSTED_ORIGINS + _dev_origins))
 
 CORS_ALLOW_HEADERS = [
     'accept',

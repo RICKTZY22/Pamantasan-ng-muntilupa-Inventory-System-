@@ -4,7 +4,8 @@ from rest_framework.response import Response
 from datetime import timedelta
 
 from django.db import transaction
-from django.db.models import Q, F, Count, Case, When, IntegerField, Value, Sum
+from django.db.models import Q, F, Count, Case, When, IntegerField, Value, Sum, CharField
+from django.db.models.functions import Concat
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
@@ -41,9 +42,13 @@ def get_range_start(range_key):
     return None
 
 
+# Terminal statuses eligible for clearing (soft-delete) / history purge.
+CLEARABLE_STATUSES = ['COMPLETED', 'RETURNED', 'REJECTED', 'CANCELLED']
+
+
 class RequestViewSet(viewsets.ModelViewSet):
     # State changes use explicit actions, not generic PATCH/DELETE.
-    http_method_names = ['get', 'post', 'head', 'options']
+    http_method_names = ['get', 'post', 'delete', 'head', 'options']
 
     queryset = Request.objects.all()
 
@@ -53,8 +58,10 @@ class RequestViewSet(viewsets.ModelViewSet):
         return RequestSerializer
 
     def get_permissions(self):
-        if self.action in ['approve', 'reject', 'check_overdue']:
+        if self.action in ['approve', 'reject', 'complete']:
             return [IsStaffOrAbove()]
+        if self.action == 'auto_decision_config':
+            return [IsAdmin()]
         return [permissions.IsAuthenticated()]
 
     def get_queryset(self):
@@ -71,16 +78,40 @@ class RequestViewSet(viewsets.ModelViewSet):
 
         # Filters
         status_filter = self.request.query_params.get('status', '')
-        search = self.request.query_params.get('search', '')
+        completed_filter = self.request.query_params.get('completed', '').lower() == 'true'
+        search = self.request.query_params.get('search', '').strip()
 
-        if status_filter:
+        if completed_filter:
+            queryset = queryset.filter(status__in=['COMPLETED', 'RETURNED'])
+        elif status_filter:
             queryset = queryset.filter(status=status_filter)
 
+        priority_filter = self.request.query_params.get('priority', '').strip()
+        if priority_filter:
+            queryset = queryset.filter(priority=priority_filter)
+
         if search:
-            queryset = queryset.filter(
-                Q(item_name__icontains=search) |
-                Q(purpose__icontains=search)
-            )
+            if user.has_min_role('STAFF'):
+                queryset = queryset.annotate(
+                    borrower_full_name=Concat(
+                        'requested_by__first_name',
+                        Value(' '),
+                        'requested_by__last_name',
+                        output_field=CharField(),
+                    )
+                ).filter(
+                    Q(borrower_full_name__icontains=search) |
+                    Q(requested_by__first_name__icontains=search) |
+                    Q(requested_by__last_name__icontains=search) |
+                    Q(requested_by__username__icontains=search) |
+                    Q(requested_by__email__icontains=search) |
+                    Q(requested_by__student_id__icontains=search)
+                )
+            else:
+                queryset = queryset.filter(
+                    Q(item_name__icontains=search) |
+                    Q(purpose__icontains=search)
+                )
 
         # Staff can switch between all requests and their own.
         if self.request.query_params.get('mine', '').lower() == 'true':
@@ -132,6 +163,18 @@ class RequestViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        if getattr(request.user, 'credit_score', 100) <= User.CREDIT_DISABLE_THRESHOLD:
+            if request.user.is_active:
+                request.user.is_active = False
+                request.user.save(update_fields=['is_active'])
+            return Response(
+                {
+                    'error': 'Your account credit score is too low to submit new requests. Contact an administrator.',
+                    'code': 'CREDIT_SCORE_DISABLED',
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         # Auto-inherit priority from the item (set by staff/admin in inventory)
@@ -147,23 +190,95 @@ class RequestViewSet(viewsets.ModelViewSet):
                    details=f'Created request for "{req.item_name}" (qty: {req.quantity})',
                    request=request)
 
-        # Notify all staff/admin about the new request (batched + live push).
-        author_name = request.user.get_full_name() or request.user.username
-        staff_users = User.objects.filter(
-            role__in=['STAFF', 'ADMIN'], is_active=True,
-        ).exclude(id=request.user.id)
-        notify_many(
-            staff_users,
-            request_obj=req,
-            notif_type='STATUS_CHANGE',
-            message=f'{author_name} submitted a new request for "{req.item_name}"',
-            sender=request.user,
-        )
+        # AI-assisted auto-decision (deterministic rules; OFF by default).
+        self._maybe_auto_decide(req, item, request)
+
+        # Only notify staff about a NEW request if it still needs a human —
+        # auto-approved/rejected requests already notified the requester.
+        if req.status == Request.Status.PENDING:
+            author_name = request.user.get_full_name() or request.user.username
+            staff_users = User.objects.filter(
+                role__in=['STAFF', 'ADMIN'], is_active=True,
+            ).exclude(id=request.user.id)
+            notify_many(
+                staff_users,
+                request_obj=req,
+                notif_type='STATUS_CHANGE',
+                message=f'{author_name} submitted a new request for "{req.item_name}"',
+                sender=request.user,
+            )
 
         return Response(
             RequestSerializer(req).data,
             status=status.HTTP_201_CREATED,
         )
+
+    def destroy(self, request, *args, **kwargs):
+        return Response(
+            {'detail': 'Direct request deletion is not allowed.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    def _maybe_auto_decide(self, req, item, request):
+        """Run the deterministic rule engine on a freshly-created PENDING request.
+        No-op unless auto-decision is enabled. The decision is rule-based; the AI
+        only writes the explanation (templated fallback if it is unavailable)."""
+        from . import auto_decision as ad
+        from apps.messaging.assistant import templated_decision_note
+
+        config = ad.get_config()
+        if config['mode'] == 'off':
+            return
+
+        active = Request.objects.filter(
+            requested_by=req.requested_by, status__in=OUTSTANDING_STATUSES,
+        ).exclude(pk=req.pk).count()
+        daily = ad.get_daily_count()
+        decision = ad.evaluate(
+            is_returnable=item.is_returnable, priority=item.priority, quantity=req.quantity,
+            active_borrows=active, daily_count=daily, config=config,
+            credit_score=req.requested_by.credit_score,
+            overdue_count=req.requested_by.overdue_count,
+            stock=item.quantity,
+        )
+        reason_text = ' '.join(decision.reasons)
+        facts = {
+            'decision': {ad.AUTO_APPROVE: 'approve', ad.AUTO_REJECT: 'reject', ad.NEEDS_REVIEW: 'review'}[decision.action],
+            'item_name': req.item_name, 'category': item.category, 'is_returnable': item.is_returnable,
+            'priority': item.priority, 'quantity': req.quantity, 'stock': item.quantity,
+            'active_borrows': active,
+            'credit_score': req.requested_by.credit_score,
+            'overdue_count': req.requested_by.overdue_count,
+            'reasons': decision.reasons,
+        }
+        req.auto_recommendation = ad.RECOMMENDATION[decision.action]
+        # Deterministic, instant note — the LLM is intentionally kept OUT of the
+        # request-create path (it can take many seconds and would hang submits).
+        req.auto_note = templated_decision_note(facts)
+
+        # suggest mode (or anything not 'auto'): record the recommendation, leave PENDING.
+        if config['mode'] != 'auto':
+            req.save(update_fields=['auto_recommendation', 'auto_note'])
+            return
+
+        if decision.action == ad.AUTO_APPROVE:
+            with transaction.atomic():
+                ok, error = self._apply_approval(req, None, request=request, auto=True)
+            if ok:
+                req.auto_decided = True
+                req.save(update_fields=['auto_recommendation', 'auto_note', 'auto_decided'])
+                ad.increment_daily_count()
+            else:
+                # Stock vanished in a race → leave it PENDING for staff.
+                req.auto_note = f'{req.auto_note} (Could not auto-approve: {error})'
+                req.save(update_fields=['auto_recommendation', 'auto_note'])
+        elif decision.action == ad.AUTO_REJECT:
+            with transaction.atomic():
+                self._apply_rejection(req, None, reason_text, request=request, auto=True)
+            req.auto_decided = True
+            req.save(update_fields=['auto_recommendation', 'auto_note', 'auto_decided'])
+        else:  # NEEDS_REVIEW
+            req.save(update_fields=['auto_recommendation', 'auto_note'])
 
     @staticmethod
     def _ensure_pending(req, action_verb):
@@ -184,6 +299,71 @@ class RequestViewSet(viewsets.ModelViewSet):
         self.check_object_permissions(request, req)
         return req
 
+    def _apply_approval(self, req, actor, request=None, auto=False):
+        """Reserve stock and mark a pending request approved, then audit
+        + notify the requester. Returns (ok, error). Must run inside a transaction.
+        Shared by the staff approve() action and the auto-decision path
+        (actor=None means the system/auto-rule)."""
+        from apps.inventory.models import Item
+        item = req.item
+        updated = Item.objects.filter(
+            pk=item.pk, quantity__gte=req.quantity,
+        ).update(quantity=F('quantity') - req.quantity)
+        if not updated:
+            item.refresh_from_db()
+            return False, f'Insufficient stock. Only {item.quantity} available, but {req.quantity} requested.'
+
+        item.refresh_from_db()
+        if item.quantity == 0:
+            item.status = 'IN_USE'
+            item.save(update_fields=['status'])
+
+        req.approved_by = actor
+        req.approved_at = timezone.now()
+        req.status = 'APPROVED'
+        if item.is_returnable and item.borrow_duration:
+            delta = item.get_return_timedelta()
+            if delta:
+                req.expected_return = timezone.now() + delta
+        req.save()
+
+        log_action(
+            AuditLog.REQUEST_AUTO_APPROVED if auto else AuditLog.REQUEST_APPROVED,
+            user=actor,
+            details=f'{"[AUTO] " if auto else ""}Approved request #{req.id} for "{req.item_name}" (qty: {req.quantity})',
+            request=request,
+        )
+        approver = (actor.get_full_name() or actor.username) if actor else 'PLMun auto-approval'
+        create_notif_if_new(
+            recipient=req.requested_by, request_obj=req, notif_type='STATUS_CHANGE',
+            message=f'{approver} approved your request for "{req.item_name}"',
+            sender=actor,
+        )
+        return True, None
+
+    def _apply_rejection(self, req, actor, reason, request=None, auto=False):
+        """Mark a pending request rejected (no stock change), then audit + notify.
+        Shared by reject() and the auto-decision path (actor=None = system)."""
+        req.status = 'REJECTED'
+        req.approved_by = actor
+        req.approved_at = timezone.now()
+        req.rejection_reason = reason or ''
+        req.save()
+
+        log_action(
+            AuditLog.REQUEST_AUTO_REJECTED if auto else AuditLog.REQUEST_REJECTED,
+            user=actor,
+            details=f'{"[AUTO] " if auto else ""}Rejected request #{req.id} for "{req.item_name}". Reason: {reason or "(none)"}',
+            request=request,
+        )
+        rejector = (actor.get_full_name() or actor.username) if actor else 'PLMun auto-rejection'
+        reason_text = f' Reason: "{reason}"' if reason else ''
+        create_notif_if_new(
+            recipient=req.requested_by, request_obj=req, notif_type='STATUS_CHANGE',
+            message=f'{rejector} rejected your request for "{req.item_name}".{reason_text}',
+            sender=actor,
+        )
+
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         """Approve a pending request, reserve stock, and notify the requester."""
@@ -194,63 +374,18 @@ class RequestViewSet(viewsets.ModelViewSet):
             if guard:
                 return guard
 
-            # Prevent self-approval (requester cannot approve their own request)
+            # Prevent self-approval (requester cannot approve their own request).
+            # This guard is intentionally only on the manual action — the auto path
+            # acts as the system, not the requester.
             if req.requested_by == request.user:
                 return Response(
                     {'error': 'You cannot approve your own request'},
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-            item = req.item
-            from apps.inventory.models import Item
-            updated = Item.objects.filter(
-                pk=item.pk,
-                quantity__gte=req.quantity,
-            ).update(quantity=F('quantity') - req.quantity)
-
-            if not updated:
-                # Re-read to give an accurate error message
-                item.refresh_from_db()
-                return Response(
-                    {'error': f'Insufficient stock. Only {item.quantity} available, but {req.quantity} requested.'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            # If quantity hit zero, mark item as IN_USE
-            item.refresh_from_db()
-            if item.quantity == 0:
-                item.status = 'IN_USE'
-                item.save(update_fields=['status'])
-
-            req.approved_by = request.user
-            req.approved_at = timezone.now()
-
-            if not item.is_returnable:
-                req.status = 'COMPLETED'
-            else:
-                req.status = 'APPROVED'
-                # Auto-calculate expected return from item's borrow duration
-                if item.borrow_duration:
-                    delta = item.get_return_timedelta()
-                    if delta:
-                        req.expected_return = timezone.now() + delta
-
-            req.save()
-
-        # Audit log
-        log_action(AuditLog.REQUEST_APPROVED, user=request.user,
-                   details=f'Approved request #{req.id} for "{req.item_name}" (qty: {req.quantity})',
-                   request=request)
-
-        # Notify the requester about approval.
-        approver_name = request.user.get_full_name() or request.user.username
-        create_notif_if_new(
-            recipient=req.requested_by,
-            request_obj=req,
-            notif_type='STATUS_CHANGE',
-            message=f'{approver_name} approved your request for "{req.item_name}"',
-            sender=request.user,
-        )
+            ok, error = self._apply_approval(req, request.user, request=request)
+            if not ok:
+                return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(RequestSerializer(req).data)
 
@@ -266,27 +401,9 @@ class RequestViewSet(viewsets.ModelViewSet):
             if guard:
                 return guard
 
-            req.status = 'REJECTED'
-            req.approved_by = request.user
-            req.approved_at = timezone.now()
-            req.rejection_reason = serializer.validated_data.get('reason', '')
-            req.save()
-
-        # Audit log
-        log_action(AuditLog.REQUEST_REJECTED, user=request.user,
-                   details=f'Rejected request #{req.id} for "{req.item_name}". Reason: {req.rejection_reason or "(none)"}',
-                   request=request)
-
-        # Notify the requester about rejection.
-        rejector_name = request.user.get_full_name() or request.user.username
-        reason_text = f' Reason: "{req.rejection_reason}"' if req.rejection_reason else ''
-        create_notif_if_new(
-            recipient=req.requested_by,
-            request_obj=req,
-            notif_type='STATUS_CHANGE',
-            message=f'{rejector_name} rejected your request for "{req.item_name}".{reason_text}',
-            sender=request.user,
-        )
+            self._apply_rejection(
+                req, request.user, serializer.validated_data.get('reason', ''), request=request,
+            )
 
         return Response(RequestSerializer(req).data)
 
@@ -295,9 +412,9 @@ class RequestViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             req = self._get_locked_request(request, pk)
 
-            if req.requested_by != request.user and not request.user.has_min_role('STAFF'):
+            if not request.user.has_min_role('STAFF'):
                 return Response(
-                    {'error': 'You can only complete your own requests'},
+                    {'error': 'Staff access required to complete requests'},
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
@@ -370,9 +487,9 @@ class RequestViewSet(viewsets.ModelViewSet):
                     {'error': 'You can only return your own borrowed items'},
                     status=status.HTTP_403_FORBIDDEN,
                 )
-            if req.status not in ('APPROVED', 'COMPLETED'):
+            if req.status != 'APPROVED':
                 return Response(
-                    {'error': 'Only approved or completed requests can be returned'},
+                    {'error': 'Only approved requests can be returned'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             if not req.item.is_returnable:
@@ -393,7 +510,7 @@ class RequestViewSet(viewsets.ModelViewSet):
         # Tell staff/admin a return is waiting for confirmation (batched).
         requester_name = request.user.get_full_name() or request.user.username
         notify_many(
-            User.objects.filter(role__in=['STAFF', 'ADMIN'], is_active=True),
+            User.objects.filter(role__in=['STAFF', 'ADMIN'], is_active=True).exclude(id=request.user.id),
             request_obj=req, notif_type='STATUS_CHANGE',
             message=f'{requester_name} is returning "{req.item_name}". Please confirm receipt.',
             sender=request.user,
@@ -419,6 +536,12 @@ class RequestViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+            now = timezone.now()
+            was_late = bool(req.expected_return and now > req.expected_return)
+            was_early = bool(req.expected_return and now < req.expected_return)
+            # Persistent ledger, not notification existence (notifications are deletable).
+            overdue_already_counted = req.overdue_penalty_applied
+
             # Restore stock atomically now that receipt is confirmed.
             item = req.item
             Item.objects.filter(pk=item.pk).update(quantity=F('quantity') + req.quantity)
@@ -427,21 +550,29 @@ class RequestViewSet(viewsets.ModelViewSet):
                 item.status = 'AVAILABLE'
                 item.save(update_fields=['status'])
 
+            # A confirmed return is RETURNED (distinct from a consumable being
+            # marked COMPLETED) so the "Returned" progress step and stat are real.
             req.status = 'RETURNED'
-            req.returned_at = timezone.now()
+            req.returned_at = now
             req.return_confirmed_by = request.user
             req.save(update_fields=['status', 'returned_at', 'return_confirmed_by', 'updated_at'])
+
+            borrower = req.requested_by
+            if was_early:
+                borrower.apply_credit_change(2, early_returns=1)
+            elif was_late and not overdue_already_counted:
+                borrower.apply_credit_change(-5, late_incidents=1)
+                Request.objects.filter(pk=req.pk).update(overdue_penalty_applied=True)
 
             # The item is back — clear any lingering OVERDUE alerts for it so a
             # returned item never keeps showing as overdue in the bell.
             Notification.objects.filter(request=req, type='OVERDUE').delete()
 
             # Auto-unflag the borrower if they have no remaining outstanding overdue items.
-            borrower = req.requested_by
             remaining_overdue = Request.objects.filter(
                 requested_by=borrower,
                 status__in=OUTSTANDING_STATUSES,
-                expected_return__lt=timezone.now(),
+                expected_return__lt=now,
             ).exclude(pk=req.pk).count()
             if remaining_overdue == 0 and borrower.is_flagged:
                 borrower.is_flagged = False
@@ -495,16 +626,20 @@ class RequestViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        clearable_statuses = ['COMPLETED', 'RETURNED', 'REJECTED', 'CANCELLED']
-        qs = self.get_queryset().filter(status__in=clearable_statuses)
+        qs = self.get_queryset().filter(status__in=CLEARABLE_STATUSES)
+        clearable_ids = list(qs.values_list('id', flat=True))
         count = qs.update(is_cleared=True)  # soft-delete: keep for reports/charts
+        notifications_cleared = Notification.objects.filter(request_id__in=clearable_ids).delete()[0]
 
         # Audit log
         log_action(AuditLog.OTHER, user=request.user,
                    details=f'Cleared {count} completed/returned/rejected/cancelled requests',
                    request=request)
 
-        return Response({'status': f'{count} requests cleared'})
+        return Response({
+            'status': f'{count} requests cleared',
+            'notificationsCleared': notifications_cleared,
+        })
 
     @action(detail=False, methods=['get'])
     def stats(self, request):
@@ -522,7 +657,7 @@ class RequestViewSet(viewsets.ModelViewSet):
             total=Count('id'),
             pending=Count('id', filter=Q(status='PENDING')),
             approved=Count('id', filter=Q(status='APPROVED')),
-            completed=Count('id', filter=Q(status='COMPLETED')),
+            completed=Count('id', filter=Q(status__in=['COMPLETED', 'RETURNED'])),
             rejected=Count('id', filter=Q(status='REJECTED')),
             returned=Count('id', filter=Q(status='RETURNED')),
             _approved_set=Count('id', filter=Q(status__in=APPROVED_SET)),
@@ -538,6 +673,23 @@ class RequestViewSet(viewsets.ModelViewSet):
         ).count()
         agg['range'] = range_key
         return Response(agg)
+
+    @action(detail=False, methods=['get', 'post'], permission_classes=[IsAdmin])
+    def auto_decision_config(self, request):
+        """Admin-only: read/update the AI auto-decision config (cache-backed, OFF
+        by default). GET returns the effective config; POST updates it (audited)."""
+        from . import auto_decision as ad
+        if request.method == 'GET':
+            return Response(ad.get_config())
+        config = ad.set_config(request.data or {})
+        log_action(
+            AuditLog.OTHER, user=request.user,
+            details=(f'Auto-decision config updated: mode={config["mode"]}, '
+                     f'max_auto_qty={config["max_auto_qty"]}, daily_cap={config["daily_cap"]}, '
+                     f'max_active_borrows={config["max_active_borrows"]}, reject_over_qty={config["reject_over_qty"]}'),
+            request=request,
+        )
+        return Response(config)
 
     @action(detail=False, methods=['post'], permission_classes=[IsAdmin])
     def clear_history(self, request):
@@ -562,9 +714,9 @@ class RequestViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        clearable = Request.objects.filter(
-            status__in=['COMPLETED', 'RETURNED', 'REJECTED', 'CANCELLED'],
-        )
+        clearable = Request.objects.filter(status__in=CLEARABLE_STATUSES)
+        clearable_ids = list(clearable.values_list('id', flat=True))
+        notifications_cleared = Notification.objects.filter(request_id__in=clearable_ids).delete()[0]
         count, _ = clearable.delete()
 
         log_action(
@@ -574,7 +726,10 @@ class RequestViewSet(viewsets.ModelViewSet):
             request=request,
         )
 
-        return Response({'status': f'{count} history records cleared'})
+        return Response({
+            'status': f'{count} history records cleared',
+            'notificationsCleared': notifications_cleared,
+        })
 
     @action(detail=False, methods=['post'], permission_classes=[IsStaffOrAbove])
     def set_clear_code(self, request):
@@ -621,10 +776,8 @@ class RequestViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'])
     def check_overdue(self, request):
-        """Run the overdue scan (notify borrowers + staff digest + flag users).
-        Idempotent — a re-scan won't re-spam an unread/recent alert. The real
-        logic lives in apps.requests.overdue so the management command can reuse
-        it for scheduled runs."""
+        """Run the overdue scan for signed-in users.
+        The scan is idempotent and returns only a summary."""
         result = run_overdue_scan()
         return Response({'status': f"{result['notified']} overdue notifications created"})
 
