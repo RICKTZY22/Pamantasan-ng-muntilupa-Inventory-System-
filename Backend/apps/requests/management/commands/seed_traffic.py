@@ -2,6 +2,7 @@
 
     python manage.py seed_traffic                     # 100 students, 1000 requests
     python manage.py seed_traffic --students 500 --requests 5000
+    python manage.py seed_traffic --student-id-start 23149842
     python manage.py seed_traffic --clear             # remove everything this seeded
 
 All seeded rows are tagged so --clear can remove them cleanly:
@@ -41,6 +42,24 @@ STATUS_WEIGHTS = [
 ]
 DEPARTMENTS = ['CICS', 'CEA', 'CBA', 'CAS', 'CTHM', 'CON']
 PURPOSES = ['Class activity', 'Lab session', 'Org event', 'Research', 'Presentation', 'Workshop']
+DEFAULT_STUDENT_ID_START = 23149842
+
+FIRST_NAMES = [
+    'Miguel', 'Angela', 'Joshua', 'Sofia', 'Gabriel', 'Bianca', 'John Paul',
+    'Trisha', 'Mark Anthony', 'Nicole', 'Jerome', 'Patricia', 'Carlo', 'Alyssa',
+    'Rafael', 'Jasmine', 'Daniel', 'Camille', 'Nathaniel', 'Andrea', 'Christian',
+    'Mikaela', 'Francis', 'Erika', 'Sean', 'Kathleen', 'Adrian', 'Angelica',
+    'Louie', 'Mariel', 'Marco', 'Janelle', 'Ryan', 'Irene', 'Vincent', 'Hannah',
+]
+
+LAST_NAMES = [
+    'Dela Cruz', 'Santos', 'Reyes', 'Garcia', 'Mendoza', 'Torres', 'Flores',
+    'Ramos', 'Aquino', 'Castillo', 'Rivera', 'Gonzales', 'Bautista', 'Villanueva',
+    'Cruz', 'Navarro', 'Domingo', 'Mercado', 'Salazar', 'Pascual', 'Valdez',
+    'Morales', 'Aguilar', 'Castro', 'Santiago', 'Velasco', 'Rosales', 'Manalo',
+    'Lopez', 'Mariano', 'Diaz', 'Tolentino', 'Soriano', 'De Leon', 'Francisco',
+    'Gutierrez',
+]
 
 
 class Command(BaseCommand):
@@ -49,6 +68,7 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument('--students', type=int, default=100)
         parser.add_argument('--requests', type=int, default=1000)
+        parser.add_argument('--student-id-start', type=int, default=DEFAULT_STUDENT_ID_START)
         parser.add_argument('--clear', action='store_true', help='Delete all seeded data and exit.')
 
     def handle(self, *args, **opts):
@@ -57,6 +77,7 @@ class Command(BaseCommand):
 
         n_students = opts['students']
         n_requests = opts['requests']
+        student_id_start = opts['student_id_start']
         started = time.monotonic()
         seed_password = os.environ.get(SEED_PASSWORD_ENV) or secrets.token_urlsafe(12)
 
@@ -72,16 +93,20 @@ class Command(BaseCommand):
         pwd = make_password(seed_password)
         new_users = []
         for i in range(1, n_students + 1):
-            uname = f'{SEED_USER_PREFIX}{i:05d}'
+            student_id = str(student_id_start + i - 1)
+            first_name, last_name = self._student_name(i)
+            uname = f'{SEED_USER_PREFIX}{student_id}'
             if uname in existing:
                 continue
+            email_name = f'{first_name}.{last_name}'.lower().replace(' ', '.')
             new_users.append(User(
                 username=uname,
-                email=f'seed.student{i:05d}@plmun.edu.ph',
-                first_name='Seed', last_name=f'Student {i:05d}',
+                email=f'{email_name}.{student_id}@plmun.edu.ph',
+                first_name=first_name,
+                last_name=last_name,
                 role='STUDENT', password=pwd,
-                student_id=f'2026-{i:05d}',
-                department=RNG.choice(DEPARTMENTS),
+                student_id=student_id,
+                department=DEPARTMENTS[(i - 1) % len(DEPARTMENTS)],
             ))
         if new_users:
             User.objects.bulk_create(new_users, batch_size=500, ignore_conflicts=True)
@@ -123,6 +148,11 @@ class Command(BaseCommand):
             f'Seeded {len(reqs)} requests across {len(students)} students in {elapsed:.1f}s '
             f'(~{overdue} overdue). Login as any: <username> / {seed_password}'
         ))
+
+    def _student_name(self, index):
+        first = FIRST_NAMES[(index - 1) % len(FIRST_NAMES)]
+        last = LAST_NAMES[((index - 1) // len(FIRST_NAMES) + index - 1) % len(LAST_NAMES)]
+        return first, last
 
     def _make_fallback_items(self):
         cats = ['ELECTRONICS', 'FURNITURE', 'EQUIPMENT', 'SUPPLIES', 'OTHER']

@@ -23,6 +23,34 @@ class User(AbstractUser):
     phone = models.CharField(max_length=20, blank=True)
     is_flagged = models.BooleanField(default=False, help_text='Flagged for overdue returns')
     overdue_count = models.PositiveIntegerField(default=0, help_text='Lifetime overdue incidents (never reset)')
+    credit_score = models.PositiveSmallIntegerField(default=100, help_text='Borrower credit score from 0 to 100')
+    early_return_count = models.PositiveIntegerField(default=0, help_text='Lifetime early confirmed returns')
+
+    CREDIT_MIN = 0
+    CREDIT_MAX = 100
+    CREDIT_DISABLE_THRESHOLD = 75
+
+    def apply_credit_change(self, delta, *, late_incidents=0, early_returns=0):
+        """Apply a borrower score change and disable risky non-staff accounts."""
+        current = int(self.credit_score if self.credit_score is not None else self.CREDIT_MAX)
+        self.credit_score = max(self.CREDIT_MIN, min(self.CREDIT_MAX, current + int(delta)))
+        update_fields = ['credit_score']
+
+        if late_incidents:
+            self.overdue_count += int(late_incidents)
+            self.is_flagged = True
+            update_fields.extend(['overdue_count', 'is_flagged'])
+
+        if early_returns:
+            self.early_return_count += int(early_returns)
+            update_fields.append('early_return_count')
+
+        if self.credit_score <= self.CREDIT_DISABLE_THRESHOLD and not self.has_min_role(self.Role.STAFF):
+            self.is_active = False
+            update_fields.append('is_active')
+
+        self.save(update_fields=sorted(set(update_fields)))
+        return self.credit_score
 
     # Numbering starts at 0 because we compare with >= in has_min_role().
     # Considered using Django's built-in groups/permissions but the role
@@ -75,6 +103,8 @@ class AuditLog(models.Model):
         REQUEST_CREATED  = 'Request Created', 'Request Created'
         REQUEST_APPROVED = 'Request Approved','Request Approved'
         REQUEST_REJECTED = 'Request Rejected','Request Rejected'
+        REQUEST_AUTO_APPROVED = 'Request Auto-Approved','Request Auto-Approved'
+        REQUEST_AUTO_REJECTED = 'Request Auto-Rejected','Request Auto-Rejected'
         REQUEST_RETURNED = 'Item Returned',   'Item Returned'
         USER_CREATED     = 'User Created',    'User Created'
         USER_UPDATED     = 'User Updated',    'User Updated'
@@ -95,6 +125,8 @@ class AuditLog(models.Model):
     REQUEST_CREATED  = Action.REQUEST_CREATED
     REQUEST_APPROVED = Action.REQUEST_APPROVED
     REQUEST_REJECTED = Action.REQUEST_REJECTED
+    REQUEST_AUTO_APPROVED = Action.REQUEST_AUTO_APPROVED
+    REQUEST_AUTO_REJECTED = Action.REQUEST_AUTO_REJECTED
     REQUEST_RETURNED = Action.REQUEST_RETURNED
     USER_CREATED    = Action.USER_CREATED
     USER_UPDATED    = Action.USER_UPDATED

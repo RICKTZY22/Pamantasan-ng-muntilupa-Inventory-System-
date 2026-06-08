@@ -21,10 +21,17 @@ class Request(models.Model):
         MEDIUM = 'MEDIUM', 'Medium'
         HIGH = 'HIGH', 'High'
 
+    class AutoRecommendation(models.TextChoices):
+        APPROVE = 'APPROVE', 'Approve'
+        REJECT = 'REJECT', 'Reject'
+        REVIEW = 'REVIEW', 'Review'
+
 
     item = models.ForeignKey(
         'inventory.Item',
-        on_delete=models.CASCADE,
+        # PROTECT so deleting an item can't erase borrow history — staff retire
+        # items (status RETIRED) instead of hard-deleting them.
+        on_delete=models.PROTECT,
         related_name='requests',
     )
     # Denormalized on purpose: we snapshot the item name at request time
@@ -35,7 +42,9 @@ class Request(models.Model):
 
     requested_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
+        # PROTECT so deleting a user can't erase their request history — admins
+        # deactivate accounts instead of hard-deleting them.
+        on_delete=models.PROTECT,
         related_name='requests',
     )
     quantity = models.PositiveIntegerField(default=1)
@@ -67,6 +76,19 @@ class Request(models.Model):
     )
     approved_at = models.DateTimeField(null=True, blank=True)
     rejection_reason = models.TextField(blank=True)
+
+    # AI-assisted auto-decision: deterministic rules decide, the LLM only explains.
+    auto_recommendation = models.CharField(
+        max_length=10, choices=AutoRecommendation.choices, blank=True, default='',
+    )
+    auto_note = models.TextField(blank=True)
+    auto_decided = models.BooleanField(default=False)
+
+    # Persistent overdue-penalty ledger: set True once a credit penalty has been
+    # charged for this request's overdue incident, so re-scans and return
+    # confirmation never double-charge. Notifications are deletable, so they must
+    # NOT be used as this ledger.
+    overdue_penalty_applied = models.BooleanField(default=False)
 
     # Two-step return handshake: the borrower (or staff) requests a return,
     # then a staff/admin confirms physical receipt. This prevents a single

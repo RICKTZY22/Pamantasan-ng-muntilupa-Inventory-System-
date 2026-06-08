@@ -41,6 +41,13 @@ SYSTEM_INSTRUCTION = (
     'If a task needs staff approval, tell the user that staff/admin must complete it.'
 )
 
+EXPLAIN_SYSTEM_INSTRUCTION = (
+    'You explain an automated inventory borrow-request decision to staff in one or two '
+    'short, factual sentences of formal English. The decision was already made by '
+    'deterministic rules — state it plainly and give the reason. Do not invent new '
+    'policy, do not add caveats, and never reveal secrets.'
+)
+
 
 class AssistantUnavailable(Exception):
     """Raised when the configured assistant provider cannot answer."""
@@ -241,7 +248,7 @@ def polish_reply_text(text):
     return cleaned.strip()
 
 
-def _generate_gemini(prompt):
+def _generate_gemini(prompt, system_instruction=SYSTEM_INSTRUCTION):
     """Cloud provider (production). Returns raw reply text."""
     api_key = getattr(settings, 'GEMINI_API_KEY', '')
     if not api_key:
@@ -258,7 +265,7 @@ def _generate_gemini(prompt):
         response = client.models.generate_content(
             model=getattr(settings, 'GEMINI_MODEL', 'gemini-2.5-flash'),
             contents=prompt,
-            config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION),
+            config=types.GenerateContentConfig(system_instruction=system_instruction),
         )
     except Exception as exc:
         raise AssistantUnavailable('Gemini could not answer right now. Please try again later.') from exc
@@ -280,14 +287,15 @@ def _validate_ollama_base_url(base):
     return base.rstrip('/')
 
 
-def _generate_ollama(prompt):
+def _generate_ollama(prompt, system_instruction=SYSTEM_INSTRUCTION, timeout=None):
     """Local provider (development). Talks to a running Ollama server over HTTP
     using the chat API — no API key needed. Returns raw reply text."""
     base = _validate_ollama_base_url(getattr(settings, 'OLLAMA_BASE_URL', 'http://localhost:11434'))
     model = getattr(settings, 'OLLAMA_MODEL', 'qwen2.5:7b-instruct')
     num_ctx = getattr(settings, 'OLLAMA_NUM_CTX', 4096)
     # Bounded so a slow/hung local model can't tie up a request worker for minutes.
-    timeout = getattr(settings, 'OLLAMA_TIMEOUT', 30)
+    if timeout is None:
+        timeout = getattr(settings, 'OLLAMA_TIMEOUT', 30)
 
     try:
         response = requests.post(
@@ -295,7 +303,7 @@ def _generate_ollama(prompt):
             json={
                 'model': model,
                 'messages': [
-                    {'role': 'system', 'content': SYSTEM_INSTRUCTION},
+                    {'role': 'system', 'content': system_instruction},
                     {'role': 'user', 'content': prompt},
                 ],
                 'stream': False,
@@ -323,25 +331,72 @@ def _generate_ollama(prompt):
     return (data.get('message') or {}).get('content', '') or ''
 
 
-def generate_reply(user, question, conversation=None, mode='assistant', referred_item=None):
-    """Build the role-scoped context and dispatch to the configured provider.
-    Provider is chosen by settings.ASSISTANT_PROVIDER ('gemini' | 'ollama')."""
-    prompt = build_context(user, question, conversation=conversation, mode=mode, referred_item=referred_item)
+def _dispatch_prompt(prompt, system_instruction=SYSTEM_INSTRUCTION, timeout=None):
+    """Send a fully-built prompt to the configured provider; returns raw text.
+    Provider chosen by settings.ASSISTANT_PROVIDER ('gemini' | 'ollama')."""
     provider = getattr(settings, 'ASSISTANT_PROVIDER', 'gemini')
-
     if provider == 'ollama':
-        raw = _generate_ollama(prompt)
-    elif provider == 'gemini':
-        raw = _generate_gemini(prompt)
-    else:
-        raise AssistantUnavailable(
-            f'Unknown assistant provider "{provider}". Use "ollama" for local development or "gemini" for production.'
-        )
+        return _generate_ollama(prompt, system_instruction=system_instruction, timeout=timeout)
+    if provider == 'gemini':
+        return _generate_gemini(prompt, system_instruction=system_instruction)
+    raise AssistantUnavailable(
+        f'Unknown assistant provider "{provider}". Use "ollama" for local development or "gemini" for production.'
+    )
 
-    text = polish_reply_text(raw)
+
+def generate_reply(user, question, conversation=None, mode='assistant', referred_item=None):
+    """Build the role-scoped context and dispatch to the configured provider."""
+    prompt = build_context(user, question, conversation=conversation, mode=mode, referred_item=referred_item)
+    text = polish_reply_text(_dispatch_prompt(prompt))
     if not text:
         raise AssistantUnavailable('The assistant returned an empty response. Please try again.')
     return text
+
+
+def templated_decision_note(facts):
+    """Deterministic, provider-free explanation built only from structured facts.
+    Instant + reliable — used for the auto-decision note (and as the LLM fallback).
+    Keeps the LLM out of the request-create hot path."""
+    verb = {
+        'approve': 'Auto-approved', 'reject': 'Auto-rejected', 'review': 'Sent for staff review',
+    }.get(str(facts.get('decision', 'review')).lower(), 'Reviewed')
+    item = strip_tags(str(facts.get('item_name', 'item')))[:80]
+    base = f'{verb}: {item} (qty {facts.get("quantity", "?")}).'
+    reasons = facts.get('reasons') or []
+    if reasons:
+        base += ' ' + ' '.join(str(r) for r in reasons)
+    return base.strip()
+
+
+def explain_decision(facts):
+    """Short, human-readable explanation of a RULE decision for staff.
+
+    Fed ONLY sanitized structured facts (never the requester's free-text purpose),
+    so the model cannot be steered by user input. The DECISION is made by the rule
+    engine; this is presentation only. Falls back to a deterministic templated
+    string if the provider is unavailable or slow — the decision never depends on
+    the AI."""
+    template = templated_decision_note(facts)
+    prompt = '\n'.join([
+        'Explain this borrow-request decision to staff in one or two short sentences.',
+        f'Decision: {str(facts.get("decision", "review")).lower()}',
+        f'Item: {strip_tags(str(facts.get("item_name", "")))[:80]}',
+        f'Category: {facts.get("category", "")}',
+        f'Returnable: {facts.get("is_returnable")}',
+        f'Priority: {facts.get("priority", "")}',
+        f'Quantity requested: {facts.get("quantity", "")}',
+        f'In stock: {facts.get("stock", "")}',
+        f'Borrower active borrows: {facts.get("active_borrows", "")}',
+        f'Borrower credit score: {facts.get("credit_score", "")}',
+        f'Borrower overdue incidents: {facts.get("overdue_count", "")}',
+        f'Rule reasons: {" ".join(str(r) for r in (facts.get("reasons") or []))}',
+    ])
+    try:
+        raw = _dispatch_prompt(prompt, system_instruction=EXPLAIN_SYSTEM_INSTRUCTION, timeout=10)
+        return polish_reply_text(raw) or template
+    except Exception:
+        # AssistantUnavailable or anything else → the decision stands; use template.
+        return template
 
 
 def save_assistant_exchange(user, body, item=None):
