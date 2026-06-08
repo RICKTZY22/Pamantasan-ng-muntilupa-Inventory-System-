@@ -173,10 +173,15 @@ const Inventory = () => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        let result;
         if (editingItem) {
-            await updateItem(editingItem.id, formData);
+            result = await updateItem(editingItem.id, formData);
         } else {
-            await addItem(formData);
+            result = await addItem(formData);
+        }
+        if (!result?.success) {
+            alert(result?.error || 'Failed to save item');
+            return;
         }
         setIsAddModalOpen(false);
         setEditingItem(null);

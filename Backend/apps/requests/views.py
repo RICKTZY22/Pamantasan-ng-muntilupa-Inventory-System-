@@ -879,6 +879,18 @@ class NotificationViewSet(viewsets.ModelViewSet):
             status=status.HTTP_405_METHOD_NOT_ALLOWED,
         )
 
+    def update(self, request, *args, **kwargs):
+        return Response(
+            {'detail': 'Direct notification editing is not allowed.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    def partial_update(self, request, *args, **kwargs):
+        return Response(
+            {'detail': 'Direct notification editing is not allowed.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
     @action(detail=True, methods=['patch'])
     def read(self, request, pk=None):
         notification = self.get_object()

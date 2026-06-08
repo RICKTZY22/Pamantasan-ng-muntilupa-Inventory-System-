@@ -65,18 +65,26 @@ const useInventory = () => {
         setError(null);
         try {
             const cleanData = { ...item };
+            const requestedStatus = cleanData.status || 'AVAILABLE';
             // Only delete imageUrl if it's truly empty (not a File)
             if (cleanData.imageUrl !== undefined && !(cleanData.imageUrl instanceof File)) {
                 if (!cleanData.imageUrl) {
                     delete cleanData.imageUrl;
                 }
             }
+            delete cleanData.status;
             // Django's PositiveIntegerField chokes on empty strings —
             // send null instead so the field is properly cleared
             if (!cleanData.borrowDuration && cleanData.borrowDuration !== 0) {
                 cleanData.borrowDuration = null;
             }
-            const newItem = await inventoryService.create(cleanData);
+            let newItem = await inventoryService.create(cleanData);
+            if (requestedStatus && requestedStatus !== newItem.status) {
+                newItem = await inventoryService.changeStatus(newItem.id, {
+                    status: requestedStatus,
+                    note: `Initial status set to ${requestedStatus}`,
+                });
+            }
             setInventory(prev => [...prev, newItem]);
             return { success: true, item: newItem, message: 'Item added successfully' };
         } catch (err) {
@@ -93,7 +101,7 @@ const useInventory = () => {
         setError(null);
         try {
             // Only send writable fields
-            const allowedKeys = ['name', 'category', 'quantity', 'status', 'location', 'description', 'imageUrl', 'accessLevel', 'isReturnable', 'priority', 'borrowDuration', 'borrowDurationUnit'];
+            const allowedKeys = ['name', 'category', 'quantity', 'location', 'description', 'imageUrl', 'accessLevel', 'isReturnable', 'priority', 'borrowDuration', 'borrowDurationUnit'];
             const cleanData = {};
             allowedKeys.forEach(key => {
                 if (data[key] !== undefined && data[key] !== null && data[key] !== '') {
@@ -108,7 +116,13 @@ const useInventory = () => {
             if (!data.borrowDuration && data.borrowDuration !== 0) {
                 cleanData.borrowDuration = null;
             }
-            const updatedItem = await inventoryService.update(id, cleanData);
+            let updatedItem = await inventoryService.update(id, cleanData);
+            if (data.status && data.status !== updatedItem.status) {
+                updatedItem = await inventoryService.changeStatus(id, {
+                    status: data.status,
+                    note: `Changed from ${updatedItem.status} via item edit`,
+                });
+            }
             setInventory(prev => prev.map(item =>
                 item.id === id ? updatedItem : item
             ));

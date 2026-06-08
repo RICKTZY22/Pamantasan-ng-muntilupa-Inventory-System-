@@ -32,6 +32,9 @@ ALLOWED_HOSTS = [
     if host.strip()
 ]
 
+if DEBUG and '*' not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append('*')
+
 
 # ===== Installed Apps =====
 INSTALLED_APPS = [
@@ -185,6 +188,9 @@ if DEBUG:
     CORS_ALLOWED_ORIGIN_REGEXES = [
         r'^http://localhost:\d+$',
         r'^http://127\.0\.0\.1:\d+$',
+        r'^http://192\.168\.\d{1,3}\.\d{1,3}:\d+$',
+        r'^http://10\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d+$',
+        r'^http://172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}:\d+$',
     ]
     _dev_origins = [
         f'{host}:{port}'
@@ -335,6 +341,9 @@ LOGGING = {
     'root': {'handlers': ['console'], 'level': 'WARNING'},
     'loggers': {
         'django': {'handlers': ['console'], 'level': _LOG_LEVEL, 'propagate': False},
+        # Daphne's dev access logger prints every successful API request. Keep
+        # warnings/errors visible without flooding the terminal during normal use.
+        'django.channels.server': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
         # 500s / request errors always logged, even in production.
         'django.request': {'handlers': ['console'], 'level': 'ERROR', 'propagate': False},
         'daphne': {'handlers': ['console'], 'level': _LOG_LEVEL, 'propagate': False},

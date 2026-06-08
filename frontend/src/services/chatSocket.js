@@ -3,6 +3,7 @@ import useAuthStore from '../store/authStore';
 import useNotificationStore from '../store/notificationStore';
 import messageService from './messageService';
 import notificationService from './notificationService';
+import { API_URL } from './api';
 
 // Pull the full notification list once (login + every reconnect). Reconnect
 // resync matters because any notification.new events sent while the socket was
@@ -22,8 +23,7 @@ let shouldReconnect = false;
 let backoff = 1000;
 
 const wsUrl = () => {
-    const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
-    const origin = apiBase.replace(/\/api\/?$/, '');
+    const origin = API_URL.replace(/\/api\/?$/, '');
     const wsOrigin = origin.replace(/^http/, 'ws'); // http→ws, https→wss
     return `${wsOrigin}/ws/chat/`;
 };
