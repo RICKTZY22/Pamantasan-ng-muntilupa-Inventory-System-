@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Plus, MagnifyingGlass as Search, Check, X, Clock, CheckCircle, Package, Lock, Eye, FileText, User, CalendarBlank as Calendar, ArrowCounterClockwise as RotateCcw, Trash as Trash2, Warning as AlertTriangle, Timer, Prohibit as Ban, CaretDown as ChevronDown, CaretRight as ChevronRight, Flag } from '@phosphor-icons/react';
 import { Button, Input, Card, Modal, Table } from '../components/ui';
 import { StaffOnly } from '../components/auth';
 import { useRequests, useInventory, useIsMobile } from '../hooks';
 import useAuthStore from '../store/authStore';
 import { hasMinRole, ROLES } from '../utils/roles';
+import { buildRequestTabParams, canCompleteRequest, canStartReturn as canStartRequestReturn } from '../utils/requestLifecycle';
 import { useLocation } from 'react-router-dom';
 
 const statusColors = {
@@ -26,12 +27,12 @@ const priorityConfig = {
 // Status tabs for the paged Requests list. 'OVERDUE' is a pseudo-status (server
 // filters by outstanding + past-due); the rest map straight to Request.status.
 const STATUS_TABS = [
+    { key: 'ALL', label: 'All' },
     { key: 'PENDING', label: 'Pending' },
     { key: 'OVERDUE', label: 'Overdue' },
     { key: 'APPROVED', label: 'Approved' },
     { key: 'RETURN_PENDING', label: 'Return Pending' },
     { key: 'COMPLETED', label: 'Completed' },
-    { key: 'RETURNED', label: 'Returned' },
     { key: 'REJECTED', label: 'Rejected' },
     { key: 'CANCELLED', label: 'Cancelled' },
 ];
@@ -49,11 +50,12 @@ const PriorityBadge = ({ priority }) => {
 // Row of action buttons shared by mobile and desktop request views.
 // Compact mode (mobile) uses smaller icons and adds text labels next to the
 // primary actions; desktop renders icon-only with bigger hit targets.
-const RequestActionButtons = ({ request, isOwn, isStaffPlus, compact, onView, onApprove, onReject, onCancel, onReturn, onConfirmReturn, onCancelReturn }) => {
+const RequestActionButtons = ({ request, isOwn, isStaffPlus, compact, onView, onApprove, onReject, onCancel, onComplete, onReturn, onConfirmReturn, onCancelReturn }) => {
     const iconSize = compact ? 14 : 16;
     const isPending = request.status === 'PENDING';
     // Borrower OR staff can START a return (step 1). Only staff CONFIRM it (step 2).
-    const canStartReturn = (request.status === 'APPROVED' || request.status === 'COMPLETED') && request.isReturnable && (isOwn || isStaffPlus);
+    const canStartReturn = canStartRequestReturn(request, isOwn, isStaffPlus);
+    const canComplete = canCompleteRequest(request, isStaffPlus);
     const isReturnPending = request.status === 'RETURN_PENDING';
 
     return (
@@ -81,6 +83,11 @@ const RequestActionButtons = ({ request, isOwn, isStaffPlus, compact, onView, on
                     <RotateCcw size={iconSize} />{compact && <span className="text-xs ml-1">Return</span>}
                 </Button>
             )}
+            {canComplete && (
+                <Button variant="ghost" size="sm" onClick={onComplete} className="text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20" title="Mark completed">
+                    <CheckCircle size={iconSize} />{compact && <span className="text-xs ml-1">Complete</span>}
+                </Button>
+            )}
             {isReturnPending && isStaffPlus && (
                 <Button variant="ghost" size="sm" onClick={onConfirmReturn} className="text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20" title="Confirm the item was physically received">
                     <Check size={iconSize} />{compact ? <span className="text-xs ml-1">Confirm received</span> : <span className="text-xs ml-1 hidden lg:inline">Confirm</span>}
@@ -103,6 +110,9 @@ const RequestMobileCard = ({ request, isOwn, ...actions }) => (
         <div className="flex items-center justify-between gap-2">
             <p className="font-semibold text-sm text-gray-900 dark:text-white truncate">{request.itemName}</p>
             <div className="flex items-center gap-1.5 flex-shrink-0">
+                {request.autoDecided && (
+                    <span className="rounded-full bg-indigo-100 dark:bg-indigo-900/40 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700 dark:text-indigo-300" title="Auto-decided by rules">AUTO</span>
+                )}
                 <PriorityBadge priority={request.priority} />
                 <span className="text-xs text-gray-400">×{request.quantity}</span>
             </div>
@@ -123,7 +133,12 @@ const RequestMobileCard = ({ request, isOwn, ...actions }) => (
 
 const RequestDesktopRow = ({ request, isOwn, ...actions }) => (
     <Table.Row>
-        <Table.Cell className="font-medium">{request.itemName}</Table.Cell>
+        <Table.Cell className="font-medium">
+            {request.itemName}
+            {request.autoDecided && (
+                <span className="ml-2 align-middle rounded-full bg-indigo-100 dark:bg-indigo-900/40 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700 dark:text-indigo-300" title="Auto-decided by rules">AUTO</span>
+            )}
+        </Table.Cell>
         <Table.Cell>
             <div>
                 <span>{request.requestedBy}</span>
@@ -147,7 +162,7 @@ const RequestDesktopRow = ({ request, isOwn, ...actions }) => (
 // Responsive layout: cards on mobile, table on desktop. This thin router
 // hands each request off to the appropriate row component and forwards the
 // callbacks each row needs.
-const RequestGroupBody = ({ groupRequests, user, isStaffPlus, handleApprove, handleRejectClick, handleCancelClick, returnRequest, confirmReturn, cancelReturn, setDetailRequest, setDetailModalOpen }) => {
+const RequestGroupBody = ({ groupRequests, user, isStaffPlus, handleApprove, handleRejectClick, handleCancelClick, completeRequest, returnRequest, confirmReturn, cancelReturn, setDetailRequest, setDetailModalOpen }) => {
     const isMobile = useIsMobile();
 
     const rowProps = (request) => ({
@@ -161,6 +176,7 @@ const RequestGroupBody = ({ groupRequests, user, isStaffPlus, handleApprove, han
         onApprove: () => handleApprove(request.id),
         onReject: () => handleRejectClick(request.id),
         onCancel: () => handleCancelClick(request.id),
+        onComplete: () => completeRequest(request.id),
         onReturn: () => returnRequest(request.id),
         onConfirmReturn: () => confirmReturn(request.id),
         onCancelReturn: () => cancelReturn(request.id),
@@ -205,6 +221,7 @@ const Requests = () => {
         approveRequest,
         rejectRequest,
         cancelRequest,
+        completeRequest,
         returnRequest,
         confirmReturn,
         cancelReturn,
@@ -222,7 +239,8 @@ const Requests = () => {
 
     const [search, setSearch] = useState('');
     const [debouncedSearch, setDebouncedSearch] = useState('');
-    const [activeTab, setActiveTab] = useState('PENDING');  // status tab; 'OVERDUE' is a pseudo-status
+    const [activeTab, setActiveTab] = useState(isStaffPlus ? 'ALL' : 'PENDING');  // status tab; 'OVERDUE' is a pseudo-status
+    const staffDefaultTabApplied = useRef(isStaffPlus);
     const [page, setPage] = useState(1);
     const [reloadKey, setReloadKey] = useState(0);          // bump to force a refetch (after actions)
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -265,12 +283,22 @@ const Requests = () => {
         return () => clearTimeout(t);
     }, [search]);
 
+    useEffect(() => {
+        if (isStaffPlus && !staffDefaultTabApplied.current) {
+            setActiveTab('ALL');
+            staffDefaultTabApplied.current = true;
+        } else if (!isStaffPlus && activeTab === 'ALL') {
+            setActiveTab('PENDING');
+        }
+    }, [activeTab, isStaffPlus]);
+
     // Server-side filter for the active status tab ('OVERDUE' is a pseudo-status).
     const tabParams = useMemo(() => {
-        const params = { mine: viewMode === 'mine', search: debouncedSearch };
-        if (activeTab === 'OVERDUE') params.overdue = true;
-        else if (activeTab) params.status = activeTab;
-        return params;
+        return buildRequestTabParams({
+            activeTab,
+            viewMode,
+            search: debouncedSearch,
+        });
     }, [activeTab, viewMode, debouncedSearch]);
 
     // Fetch ONE 50-row page for the active tab whenever the filter/page changes
@@ -318,9 +346,22 @@ const Requests = () => {
 
     // The list now shows one server page at a time; totalPages drives the controls.
     const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+    const visibleStatusTabs = useMemo(
+        () => (isStaffPlus ? STATUS_TABS : STATUS_TABS.filter(tab => tab.key !== 'ALL')),
+        [isStaffPlus],
+    );
+    const activeTabLabel = visibleStatusTabs.find(t => t.key === activeTab)?.label || '';
+    const searchPlaceholder = isStaffPlus
+        ? 'Search borrower name, student ID, email...'
+        : 'Search your requests...';
 
     const handleApprove = async (id) => {
         const res = await approveRequest(id);
+        if (res?.success) reload();
+    };
+
+    const handleComplete = async (id) => {
+        const res = await completeRequest(id);
         if (res?.success) reload();
     };
 
@@ -484,7 +525,7 @@ const Requests = () => {
                     <div className="flex-1">
                         <Input
                             icon={Search}
-                            placeholder="Search requests..."
+                            placeholder={searchPlaceholder}
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
                         />
@@ -494,7 +535,7 @@ const Requests = () => {
 
             {/* Status tabs — each loads a server-paginated page of that status */}
             <div className="flex items-center gap-1 overflow-x-auto pb-1">
-                {STATUS_TABS.map(tab => (
+                {visibleStatusTabs.map(tab => (
                     <button
                         key={tab.key}
                         type="button"
@@ -520,7 +561,9 @@ const Requests = () => {
                     <p className="text-gray-500 text-sm">
                         {search.trim()
                             ? 'No requests match your search.'
-                            : `No ${(STATUS_TABS.find(t => t.key === activeTab)?.label || '').toLowerCase()} requests.`}
+                            : activeTab === 'ALL'
+                                ? 'No requests found.'
+                                : `No ${activeTabLabel.toLowerCase()} requests.`}
                     </p>
                 </Card>
             ) : (
@@ -533,6 +576,7 @@ const Requests = () => {
                             handleApprove={handleApprove}
                             handleRejectClick={handleRejectClick}
                             handleCancelClick={handleCancelClick}
+                            completeRequest={handleComplete}
                             returnRequest={handleReturn}
                             confirmReturn={handleConfirmReturn}
                             cancelReturn={handleCancelReturn}
@@ -848,6 +892,25 @@ const Requests = () => {
                                 {detailRequest.purpose || 'No purpose specified'}
                             </p>
                         </div>
+
+                        {detailRequest.autoNote && (
+                            <div className="p-4 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl border border-indigo-200 dark:border-indigo-800">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <FileText className="text-indigo-600 dark:text-indigo-400" size={18} />
+                                    <h4 className="font-semibold text-indigo-700 dark:text-indigo-300">
+                                        {detailRequest.autoDecided ? 'Auto-decision (by rules)' : 'AI recommendation'}
+                                    </h4>
+                                    {detailRequest.autoRecommendation && (
+                                        <span className="ml-auto rounded-full bg-indigo-100 dark:bg-indigo-800/50 px-2 py-0.5 text-xs font-bold text-indigo-700 dark:text-indigo-300">
+                                            {detailRequest.autoRecommendation}
+                                        </span>
+                                    )}
+                                </div>
+                                <p className="text-indigo-700 dark:text-indigo-300 text-sm leading-relaxed">
+                                    {detailRequest.autoNote}
+                                </p>
+                            </div>
+                        )}
 
                         {detailRequest.status === 'REJECTED' && detailRequest.rejectionReason && (
                             <div className="p-4 bg-red-50 dark:bg-red-900/20 rounded-xl border border-red-200 dark:border-red-800">

@@ -81,12 +81,15 @@ const mapUserResponse = (user) => ({
     isActive: user.isActive ?? user.is_active,
     isFlagged: user.isFlagged ?? user.is_flagged ?? false,
     overdueCount: user.overdueCount ?? user.overdue_count ?? 0,
+    creditScore: user.creditScore ?? user.credit_score ?? 100,
+    earlyReturnCount: user.earlyReturnCount ?? user.early_return_count ?? 0,
     createdAt: user.date_joined,
 });
 
 // Keep the idle handler at module level, not in Zustand state,
 // because persist() would try to serialize the function to localStorage.
 let _currentIdleHandler = null;
+let _initializeAuthPromise = null;
 
 // zustand store - mas simple kesa Redux, less boilerplate
 const useAuthStore = create(
@@ -295,25 +298,35 @@ const useAuthStore = create(
                     set({ isInitializing: false });
                     return false;
                 }
-                try {
-                    const { access } = await authService.refresh();
-                    get().setToken(access);
-                    // (re)attach idle session timeout
-                    detachIdleListeners(_currentIdleHandler);
-                    const logoutFn = get().logout;
-                    _currentIdleHandler = attachIdleListeners(logoutFn);
-                    startIdleTimer(logoutFn);
-                    // background flag/deactivation check
-                    get().refreshProfile();
-                    return true;
-                } catch {
-                    // Refresh cookie missing or expired: drop the stale session.
-                    setAccessToken(null);
-                    set({ user: null, token: null, isAuthenticated: false });
-                    return false;
-                } finally {
-                    set({ isInitializing: false });
+
+                if (_initializeAuthPromise) {
+                    return _initializeAuthPromise;
                 }
+
+                _initializeAuthPromise = (async () => {
+                    try {
+                        const { access } = await authService.refresh();
+                        get().setToken(access);
+                        // Reattach the idle timer after a page reload.
+                        detachIdleListeners(_currentIdleHandler);
+                        const logoutFn = get().logout;
+                        _currentIdleHandler = attachIdleListeners(logoutFn);
+                        startIdleTimer(logoutFn);
+                        // Check account flags after the session is restored.
+                        get().refreshProfile();
+                        return true;
+                    } catch {
+                        // Refresh cookie missing or expired: drop the stale session.
+                        setAccessToken(null);
+                        set({ user: null, token: null, isAuthenticated: false });
+                        return false;
+                    } finally {
+                        set({ isInitializing: false });
+                        _initializeAuthPromise = null;
+                    }
+                })();
+
+                return _initializeAuthPromise;
             },
 
             logout: () => {

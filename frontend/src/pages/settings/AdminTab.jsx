@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
     Shield, Clock, DownloadSimple as Download,
     FloppyDisk as Save, ArrowsClockwise, UserPlus,
-    Envelope, HardDrives, Database, Broom, Info, CheckCircle, Warning,
+    Envelope, HardDrives, Database, Broom, Info, CheckCircle, Warning, Robot,
 } from '@phosphor-icons/react';
 import { Button, Toggle } from '../../components/ui';
 import { SettingsGroup, SettingCard } from '../../components/settings';
@@ -46,6 +46,7 @@ const AdminTab = ({
     const env = import.meta.env.MODE || 'development';
     const [userCount, setUserCount] = useState(null);
     const [maintenanceEndTime, setMaintenanceEndTime] = useState(0);
+    const [autoConfig, setAutoConfig] = useState(null);
 
     const applyMaintenanceState = useCallback((data) => {
         const enabled = Boolean(data?.enabled && data?.endTime > Date.now());
@@ -86,6 +87,31 @@ const AdminTab = ({
     useEffect(() => {
         refreshMaintenance();
     }, [refreshMaintenance]);
+
+    const refreshAutoConfig = useCallback(async () => {
+        try {
+            const { data } = await api.get('/requests/auto_decision_config/');
+            setAutoConfig(data);
+        } catch {
+            /* non-admin / error: leave unset */
+        }
+    }, []);
+
+    const updateAutoConfig = useCallback(async (updates) => {
+        setAutoConfig(prev => ({ ...(prev || {}), ...updates }));
+        try {
+            const { data } = await api.post('/requests/auto_decision_config/', updates);
+            setAutoConfig(data);
+            flashMessage('AI auto-decision settings saved.', 4000);
+        } catch {
+            flashMessage('Error: failed to save auto-decision settings.', 5000);
+            refreshAutoConfig();
+        }
+    }, [flashMessage, refreshAutoConfig]);
+
+    useEffect(() => {
+        refreshAutoConfig();
+    }, [refreshAutoConfig]);
 
     return (
         <AdminOnly showAccessDenied>
@@ -169,6 +195,69 @@ const AdminTab = ({
                         wip
                         control={<Toggle checked={adminSettings.requireEmailVerification} disabled aria-label="Require email verification" />}
                     />
+                </SettingsGroup>
+
+                <SettingsGroup icon={Robot} title="AI request automation" description="Deterministic rules auto-approve/reject clear-cut requests; the AI only writes the reason. Off by default.">
+                    <SettingCard
+                        icon={Robot}
+                        title="Auto-decision mode"
+                        description="Off · Suggest (recommend to staff, human still clicks) · Auto (rules execute). Switch to Off anytime as a kill switch."
+                        control={
+                            <select
+                                value={autoConfig?.mode || 'off'}
+                                aria-label="Auto-decision mode"
+                                onChange={(e) => updateAutoConfig({ mode: e.target.value })}
+                                className="px-3 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-sm outline-none focus:ring-2 focus:ring-accent/40"
+                            >
+                                <option value="off">Off</option>
+                                <option value="suggest">Suggest</option>
+                                <option value="auto">Auto</option>
+                            </select>
+                        }
+                    />
+                    {autoConfig && autoConfig.mode !== 'off' && (
+                        <SettingCard
+                            icon={Info}
+                            title="Auto-decision thresholds"
+                            description="Consumables and LOW/MEDIUM-priority returnables can auto-approve; HIGH-priority and edge cases go to staff."
+                            expandable
+                            defaultOpen
+                        >
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {[
+                                    { key: 'max_auto_qty', label: 'Max auto-approve quantity' },
+                                    { key: 'daily_cap', label: 'Daily auto-approve cap' },
+                                    { key: 'max_active_borrows', label: 'Auto-reject over active borrows' },
+                                    { key: 'reject_over_qty', label: 'Auto-reject over quantity' },
+                                ].map(({ key, label }) => (
+                                    <div key={key}>
+                                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{label}</label>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            value={autoConfig[key] ?? 0}
+                                            onChange={(e) => setAutoConfig(prev => ({ ...prev, [key]: Math.max(0, parseInt(e.target.value, 10) || 0) }))}
+                                            className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-sm outline-none focus:ring-2 focus:ring-accent/40"
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="mt-4 flex justify-end">
+                                <Button
+                                    size="sm"
+                                    icon={Save}
+                                    onClick={() => updateAutoConfig({
+                                        max_auto_qty: autoConfig.max_auto_qty,
+                                        daily_cap: autoConfig.daily_cap,
+                                        max_active_borrows: autoConfig.max_active_borrows,
+                                        reject_over_qty: autoConfig.reject_over_qty,
+                                    })}
+                                >
+                                    Save thresholds
+                                </Button>
+                            </div>
+                        </SettingCard>
+                    )}
                 </SettingsGroup>
 
                 <SettingsGroup icon={Download} title="Backups" description="Schedule automatic backups or download one on demand">
@@ -289,7 +378,7 @@ const AdminTab = ({
                                 onClick={async () => {
                                     try {
                                         const [inv, req, usr] = await Promise.all([
-                                            api.get('/inventory/items/'),
+                                            api.get('/inventory/'),
                                             api.get('/requests/'),
                                             api.get('/users/'),
                                         ]);

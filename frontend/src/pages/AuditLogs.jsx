@@ -11,6 +11,7 @@ import { SettingsGroup, SettingCard } from '../components/settings';
 import { StaffOnly, AdminOnly } from '../components/auth';
 import { requestService, userService, auditService } from '../services';
 import { isHistoryOverdue } from '../utils/requestHistory';
+import { FINAL_REQUEST_STATUSES } from '../utils/requestLifecycle';
 import { getOverdueAge } from '../utils/timeUtils';
 
 const STATUS_COLORS = {
@@ -154,14 +155,16 @@ const AuditLogs = () => {
                 || (r.itemName || '').toLowerCase().includes(q)
                 || (r.requestedBy || '').toLowerCase().includes(q)
                 || (r.purpose || '').toLowerCase().includes(q);
-            const matchStatus = statusFilter === 'ALL' || r.status === statusFilter;
+            const matchStatus = statusFilter === 'ALL'
+                || r.status === statusFilter
+                || (statusFilter === 'COMPLETED' && FINAL_REQUEST_STATUSES.includes(r.status));
             return matchSearch && matchStatus;
         });
     }, [allRequests, search, statusFilter]);
 
     const stats = useMemo(() => ({
         total: allRequests.length,
-        completed: allRequests.filter((r) => r.status === 'COMPLETED' || r.status === 'RETURNED').length,
+        completed: allRequests.filter((r) => FINAL_REQUEST_STATUSES.includes(r.status)).length,
         flagged: flaggedItems.length,
         pending: allRequests.filter((r) => r.status === 'PENDING').length,
     }), [allRequests, flaggedItems]);

@@ -1,9 +1,16 @@
 import React from 'react';
-import { User, Camera, Envelope as Mail, Phone, Buildings as Building, FloppyDisk as Save, Hash } from '@phosphor-icons/react';
+import { User, Camera, Envelope as Mail, Phone, Buildings as Building, FloppyDisk as Save, Hash, Gauge, Warning as AlertTriangle, ArrowCounterClockwise as RotateCcw } from '@phosphor-icons/react';
 import { Button, Input, Avatar } from '../../components/ui';
 import { getRoleLabel, getRoleBadgeColor } from '../../utils/roles';
 
 const ProfileTab = ({ user, profileForm, setProfileForm, handleProfileSave, updateAvatar, isLoading }) => {
+    const creditScore = user?.creditScore ?? 100;
+    const creditTone = creditScore <= 75
+        ? 'text-red-600 dark:text-red-400'
+        : creditScore < 100
+            ? 'text-amber-600 dark:text-amber-400'
+            : 'text-emerald-600 dark:text-emerald-400';
+
     return (
         <div className="space-y-5">
             <div className="flex items-center gap-6 p-5 sm:p-6 bg-gray-50 dark:bg-gray-800/60 rounded-2xl border border-gray-200 dark:border-gray-700/60">
@@ -41,6 +48,30 @@ const ProfileTab = ({ user, profileForm, setProfileForm, handleProfileSave, upda
                         </span>
                     )}
                     <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Click the camera to upload a photo</p>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="rounded-lg border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800/40 p-4">
+                    <div className="flex items-center gap-2 text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">
+                        <Gauge size={16} />
+                        Credit Score
+                    </div>
+                    <p className={`mt-2 text-2xl font-bold ${creditTone}`}>{creditScore}/100</p>
+                </div>
+                <div className="rounded-lg border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800/40 p-4">
+                    <div className="flex items-center gap-2 text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">
+                        <AlertTriangle size={16} />
+                        Late Returns
+                    </div>
+                    <p className="mt-2 text-2xl font-bold text-gray-900 dark:text-gray-100">{user?.overdueCount ?? 0}</p>
+                </div>
+                <div className="rounded-lg border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800/40 p-4">
+                    <div className="flex items-center gap-2 text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">
+                        <RotateCcw size={16} />
+                        Early Returns
+                    </div>
+                    <p className="mt-2 text-2xl font-bold text-gray-900 dark:text-gray-100">{user?.earlyReturnCount ?? 0}</p>
                 </div>
             </div>
 

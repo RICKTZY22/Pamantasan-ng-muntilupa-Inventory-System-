@@ -13,11 +13,12 @@ const requestService = {
     },
 
     // One server-paginated page for the Requests screen.
-    listPage: async ({ page = 1, status = '', overdue = false, mine = false, search = '', include_cleared = false } = {}) => {
+    listPage: async ({ page = 1, status = '', overdue = false, completed = false, mine = false, search = '', include_cleared = false } = {}) => {
         const params = new URLSearchParams();
         params.append('page', String(page));
         if (status) params.append('status', status);
         if (overdue) params.append('overdue', 'true');
+        if (completed) params.append('completed', 'true');
         if (mine) params.append('mine', 'true');
         if (search) params.append('search', search);
         if (include_cleared) params.append('include_cleared', 'true');

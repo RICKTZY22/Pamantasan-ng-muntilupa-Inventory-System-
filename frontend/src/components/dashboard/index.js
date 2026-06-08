@@ -1,4 +1,3 @@
-export { default as StatCard } from './StatCard';
 export { default as StatChip } from './StatChip';
 export { default as StatusBars } from './StatusBars';
 export { default as HighlightCard } from './HighlightCard';

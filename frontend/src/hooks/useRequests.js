@@ -3,7 +3,7 @@ import { requestService } from '../services';
 import { formatApiError } from '../utils/errorUtils';
 
 // Avoid running the overdue scan on every page mount.
-const OVERDUE_SCAN_COOLDOWN_MS = 10 * 60 * 1000;
+const OVERDUE_SCAN_COOLDOWN_MS = 60 * 1000;
 let lastOverdueScanAt = 0;
 
 // Basic counters for loaded request rows.
@@ -14,8 +14,12 @@ const buildStats = (items) => {
         if (r.status === 'PENDING') acc.pending++;
         else if (r.status === 'APPROVED') acc.approved++;
         else if (r.status === 'REJECTED') acc.rejected++;
-        else if (r.status === 'COMPLETED') acc.completed++;
-        else if (r.status === 'RETURNED') acc.returned++;
+        else if (r.status === 'COMPLETED' || r.status === 'RETURNED') {
+            // "Completed" is the union of both terminal closed states (matches the
+            // backend stats); 'returned' is tracked as a sub-count of that.
+            acc.completed++;
+            if (r.status === 'RETURNED') acc.returned++;
+        }
         if (r.isOverdue) acc.overdue++;
         return acc;
     }, init);
@@ -98,9 +102,10 @@ const useRequests = () => {
         // Skip if a scan ran recently.
         const now = Date.now();
         if (now - lastOverdueScanAt < OVERDUE_SCAN_COOLDOWN_MS) return null;
-        lastOverdueScanAt = now;
         try {
-            return await requestService.checkOverdue();
+            const result = await requestService.checkOverdue();
+            lastOverdueScanAt = Date.now();
+            return result;
         } catch (err) {
             return null;
         }

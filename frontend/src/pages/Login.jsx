@@ -321,7 +321,9 @@ const Login = () => {
                                 <div className="mt-5 rounded-lg border border-amber-400/30 bg-amber-50/60 dark:bg-amber-500/[0.06] p-3">
                                     <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400 mb-2 flex items-center gap-1.5">
                                         <Sparkles size={12} />
-                                        Demo Accounts — click to fill email
+                                        {DEMO_PASSWORD
+                                            ? 'Demo Accounts — click to autofill'
+                                            : 'Demo Accounts — click to fill email'}
                                     </p>
                                     <div className="grid grid-cols-2 gap-1.5">
                                         {DEMO_ACCOUNTS.map((acct) => (

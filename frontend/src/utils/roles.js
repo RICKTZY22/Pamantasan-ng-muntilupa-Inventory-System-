@@ -48,14 +48,16 @@ export const getRoleLabel = (role) => {
     return labels[role] || 'Unknown';
 };
 
+// Canonical role badge colors (with dark-mode variants). Single source of truth:
+// components/users/roleMeta derives its `badge` from this so every surface matches.
 export const getRoleBadgeColor = (role) => {
     const colors = {
-        [ROLES.STUDENT]: 'bg-purple-100 text-purple-700',
-        [ROLES.FACULTY]: 'bg-yellow-100 text-yellow-700',
-        [ROLES.STAFF]: 'bg-blue-100 text-blue-700',
-        [ROLES.ADMIN]: 'bg-green-100 text-green-700'
+        [ROLES.STUDENT]: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+        [ROLES.FACULTY]: 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300',
+        [ROLES.STAFF]: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+        [ROLES.ADMIN]: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
     };
-    return colors[role] || 'bg-gray-100 text-gray-700';
+    return colors[role] || 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300';
 };
 
 // Permissions matrix — we define all of these upfront rather than
