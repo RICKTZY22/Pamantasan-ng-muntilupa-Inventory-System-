@@ -3,7 +3,7 @@ import PropTypes from 'prop-types';
 import {
     DotsThreeVertical, Envelope as Mail, Phone, Warning as AlertTriangle,
     Buildings as Building, IdentificationCard, UserCircleMinus, UserCircleCheck,
-    ShieldCheck, Trash as Trash2,
+    ShieldCheck, Trash as Trash2, ArrowCounterClockwise,
 } from '@phosphor-icons/react';
 import { ROLES } from '../../utils/roles';
 import { Avatar } from '../ui';
@@ -11,7 +11,7 @@ import { getRoleMeta } from './roleMeta';
 
 // One person card in the User Management grid: avatar + role, info chips,
 // Email/Phone footer, and a kebab ⋯ menu for admin actions.
-const UserCard = ({ user, onChangeRole, onToggleStatus, onUnflag, onDelete }) => {
+const UserCard = ({ user, onChangeRole, onToggleStatus, onUnflag, onRestoreCredit, onDelete }) => {
     const [menuOpen, setMenuOpen] = useState(false);
     const menuRef = useRef(null);
     const name = user.fullName || user.full_name || user.username || user.email || 'Unknown';
@@ -67,6 +67,12 @@ const UserCard = ({ user, onChangeRole, onToggleStatus, onUnflag, onDelete }) =>
                             <button type="button" onClick={() => act(() => onUnflag(user.id))} className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/60 transition-colors">
                                 <ShieldCheck size={17} className="text-emerald-500" />
                                 Remove flag
+                            </button>
+                        )}
+                        {(user.creditScore ?? user.credit_score ?? 100) < 100 && (
+                            <button type="button" onClick={() => act(() => onRestoreCredit(user.id))} className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/60 transition-colors">
+                                <ArrowCounterClockwise size={17} className="text-plmun" />
+                                Restore credit
                             </button>
                         )}
                         <button type="button" onClick={() => act(() => onDelete(user))} className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
@@ -131,6 +137,7 @@ UserCard.propTypes = {
     onChangeRole: PropTypes.func.isRequired,
     onToggleStatus: PropTypes.func.isRequired,
     onUnflag: PropTypes.func.isRequired,
+    onRestoreCredit: PropTypes.func.isRequired,
     onDelete: PropTypes.func.isRequired,
 };
 

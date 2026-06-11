@@ -117,9 +117,9 @@ def evaluate(*, is_returnable, priority, quantity, active_borrows, daily_count, 
         return Decision(AUTO_REJECT, [
             f'Requested quantity {quantity} exceeds current stock of {stock}.'
         ])
-    if credit_score <= 75:
+    if credit_score < 75:
         return Decision(AUTO_REJECT, [
-            f'Borrower credit score is {credit_score}; account should be reviewed before more requests.'
+            f'Borrower credit score is {credit_score}; the account is disabled until an admin restores it.'
         ])
     if active_borrows >= max_active:
         return Decision(AUTO_REJECT, [

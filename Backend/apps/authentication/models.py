@@ -45,7 +45,10 @@ class User(AbstractUser):
             self.early_return_count += int(early_returns)
             update_fields.append('early_return_count')
 
-        if self.credit_score <= self.CREDIT_DISABLE_THRESHOLD and not self.has_min_role(self.Role.STAFF):
+        # Strictly BELOW the threshold disables the account: at exactly 75 the
+        # borrower keeps access; one more incident tips them under and an admin
+        # must restore the account (see UserViewSet.restore_credit).
+        if self.credit_score < self.CREDIT_DISABLE_THRESHOLD and not self.has_min_role(self.Role.STAFF):
             self.is_active = False
             update_fields.append('is_active')
 

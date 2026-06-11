@@ -351,10 +351,14 @@ class CreditScoreModelTests(TestCase):
         ceil_user.credit_score = 90
         self.assertEqual(ceil_user.apply_credit_change(+500), 100)
 
-    def test_non_staff_disabled_at_threshold(self):
+    def test_non_staff_active_at_threshold_disabled_below(self):
         u = User.objects.create_user(username='credit-student', password='x', role=User.Role.STUDENT)
-        u.apply_credit_change(-25)  # 100 -> 75 (== disable threshold)
+        u.apply_credit_change(-25)  # 100 -> 75 (== threshold: still active)
         self.assertEqual(u.credit_score, 75)
+        self.assertTrue(u.is_active)
+
+        u.apply_credit_change(-1)   # 75 -> 74 (below threshold: disabled)
+        self.assertEqual(u.credit_score, 74)
         self.assertFalse(u.is_active)
 
     def test_staff_not_disabled_below_threshold(self):
@@ -370,6 +374,36 @@ class CreditScoreModelTests(TestCase):
         self.assertTrue(u.is_flagged)
         u.apply_credit_change(+3, early_returns=2)
         self.assertEqual(u.early_return_count, 2)
+
+
+class RestoreCreditTests(APITestCase):
+    """Admin-only restore: score back to 100, account re-activated, unflagged."""
+
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username='rc-admin', email='rc-admin@plmun.edu.ph',
+            password='x', role=User.Role.ADMIN,
+        )
+        self.borrower = User.objects.create_user(
+            username='rc-borrower', email='rc-borrower@plmun.edu.ph',
+            password='x', role=User.Role.STUDENT,
+            credit_score=60, is_active=False, is_flagged=True,
+        )
+
+    def test_admin_restores_disabled_borrower(self):
+        self.client.force_authenticate(self.admin)
+        resp = self.client.post(f'/api/users/{self.borrower.id}/restore_credit/')
+        self.borrower.refresh_from_db()
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(self.borrower.credit_score, 100)
+        self.assertTrue(self.borrower.is_active)
+        self.assertFalse(self.borrower.is_flagged)
+
+    def test_non_admin_cannot_restore(self):
+        staff = User.objects.create_user(username='rc-staff', password='x', role=User.Role.STAFF)
+        self.client.force_authenticate(staff)
+        resp = self.client.post(f'/api/users/{self.borrower.id}/restore_credit/')
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
 
 
 class AvatarValidationBypassTests(TestCase):

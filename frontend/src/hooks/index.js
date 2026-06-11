@@ -7,3 +7,4 @@ export { default as useEscapeKey } from './useEscapeKey';
 export { default as useFocusTrap } from './useFocusTrap';
 export { default as useBodyScrollLock } from './useBodyScrollLock';
 export { default as useMaintenanceWindow } from './useMaintenanceWindow';
+export { default as useLoginGuard } from './useLoginGuard';

@@ -165,6 +165,23 @@ const useUsers = () => {
         }
     }, []);
 
+    const restoreCreditUser = useCallback(async (userId) => {
+        setLoading(true);
+        setError(null);
+        try {
+            const result = await userService.restoreCredit(userId);
+            const serverUser = result.user;
+            setUsers(prev => prev.map(u => (u.id === userId ? { ...u, ...serverUser } : u)));
+            return { success: true, message: result.message };
+        } catch (err) {
+            const errorMessage = formatApiError(err, 'Failed to restore credit');
+            setError(errorMessage);
+            return { success: false, error: errorMessage };
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
     return {
         users,
         loading,
@@ -178,6 +195,7 @@ const useUsers = () => {
         toggleUserStatus,
         deleteUser,
         unflagUser,
+        restoreCreditUser,
         stats,
     };
 };

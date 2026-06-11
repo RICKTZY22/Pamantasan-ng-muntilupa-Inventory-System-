@@ -29,14 +29,29 @@ MAX_PROMPT_CHARS = 1200
 MEMORY_MESSAGE_LIMIT = 10
 AUTO_REPLY_COOLDOWN_MINUTES = 15
 AUTO_REPLY_PREFIX = 'PLMun Assistant - auto-reply while staff are away:'
+DETAIL_REQUEST_RE = re.compile(
+    r'\b(tell me more|more detail|details?|explain|why|how does|how do|walk me through|break down)\b',
+    re.IGNORECASE,
+)
+CREDIT_QUESTION_RE = re.compile(
+    r'\b(credit|credits|score|points?|ban|banned|disable|disabled|deactivate|deactivated|flagged?|'
+    r'late return|overdue|early return|auto-approve|auto approve|automation)\b',
+    re.IGNORECASE,
+)
+PROFANITY_RE = re.compile(
+    r'\b(fuck|shit|damn|hell|wtf|bitch|asshole|stupid)\b',
+    re.IGNORECASE,
+)
 
 SYSTEM_INSTRUCTION = (
     'You are PLMun Assistant for the PLMun Nexus inventory system. '
     'Answer in formal English. Keep answers concise, helpful, and read-only. '
     'Use clean plain text formatting. Start with a direct answer, then use short hyphen bullets only when listing records. '
     'Never use asterisks as bullets. Put each listed status, item, or request on its own line. '
-    'Keep most answers under six lines unless the user asks for details. '
+    'Keep most answers under six lines unless the user asks for details. If they ask for details, explain clearly without padding. '
+    'If the user is frustrated or uses profanity, stay calm, do not repeat the profanity, and answer the real question. '
     'Do not claim you created, approved, rejected, edited, deleted, or sent any request. '
+    'Do not claim you changed credit scores, removed flags, reactivated accounts, or lifted restrictions. '
     'Never reveal secrets, API keys, passwords, tokens, or environment values. '
     'If a task needs staff approval, tell the user that staff/admin must complete it.'
 )
@@ -160,6 +175,7 @@ def _referred_item_text(item):
         f'category={item.category}',
         f'quantity={item.quantity}',
         f'status={item.status}',
+        f'available_to_borrow={"yes" if item.status == "AVAILABLE" and item.quantity > 0 else "no"}',
         f'location={item.location or "unspecified"}',
         f'access_level={item.access_level}',
         f'returnable={"yes" if item.is_returnable else "no"}',
@@ -167,6 +183,48 @@ def _referred_item_text(item):
         f'description={strip_tags(item.description or "").strip() or "none"}',
     ]
     return '; '.join(parts)
+
+
+def _bool_word(value):
+    return 'yes' if value else 'no'
+
+
+def _assistant_guidance_lines(user, question):
+    lines = []
+    q = question or ''
+
+    if PROFANITY_RE.search(q):
+        lines += [
+            'Tone guidance: the user may be frustrated. De-escalate calmly, do not repeat profanity, and answer the real request.',
+        ]
+
+    if DETAIL_REQUEST_RE.search(q):
+        lines += [
+            'Detail guidance: the user asked for explanation/detail, so you may exceed six lines when useful.',
+            'Still keep the answer structured, practical, and limited to the system facts provided.',
+        ]
+
+    if CREDIT_QUESTION_RE.search(q):
+        lines += [
+            'Credit policy: borrower credit starts at 100 and is limited to 0-100.',
+            'Credit policy: late/overdue returns deduct 5 points and can flag the account.',
+            'Credit policy: early confirmed returns add 2 points.',
+            'Credit policy: a non-staff account that drops below 75 credit is disabled and only an admin can restore it.',
+            'Automation policy: auto-approval requires credit_score=100, enough stock, and the configured quantity/activity limits.',
+            'Automation policy: credit below 100 goes to staff review; credit below 75 is rejected/disabled until an admin restores it.',
+            'Credit help: to improve credit, return active items early or on time, resolve overdue items, and ask staff/admin to review any flag.',
+            'Credit help: explain bans as disabled/restricted account access, not as a punishment the assistant can remove.',
+            (
+                'Current user credit state: '
+                f'credit_score={getattr(user, "credit_score", "unknown")}, '
+                f'overdue_count={getattr(user, "overdue_count", "unknown")}, '
+                f'early_return_count={getattr(user, "early_return_count", "unknown")}, '
+                f'is_flagged={_bool_word(getattr(user, "is_flagged", False))}, '
+                f'is_active={_bool_word(getattr(user, "is_active", False))}.'
+            ),
+        ]
+
+    return lines
 
 
 def build_context(user, question, conversation=None, mode='assistant', referred_item=None):
@@ -183,7 +241,8 @@ def build_context(user, question, conversation=None, mode='assistant', referred_
 
     low_stock_text = '; '.join(f'{i.name} ({i.quantity}, {i.status})' for i in low_stock) or 'none.'
     matching_items_text = '; '.join(
-        f'{i.name} ({i.category}, qty {i.quantity}, {i.status}, {i.location})'
+        f'{i.name} ({i.category}, qty {i.quantity}, {i.status}, '
+        f'{"available" if i.status == "AVAILABLE" and i.quantity > 0 else "NOT available"}, {i.location})'
         for i in matching_items
     ) or 'none.'
     recent_requests_text = '; '.join(f'{r.item_name} x{r.quantity} - {r.status}' for r in recent_requests) or 'none.'
@@ -196,6 +255,8 @@ def build_context(user, question, conversation=None, mode='assistant', referred_
         'Answer in formal English. Be concise, practical, and read-only.',
         'Formatting rule: use paragraphs and hyphen bullets only; never use asterisks as bullets.',
         'Never claim you changed data. Never reveal secrets, tokens, passwords, or environment values.',
+        'Availability rule: an item can be borrowed ONLY when its status is AVAILABLE and its quantity is above zero. '
+        'Items that are RETIRED, IN_USE, or under MAINTENANCE are NOT available — say so plainly and never offer them as in stock.',
         f'Current user: role={user.role}, name={user.get_full_name() or user.username}.',
         f'Visible inventory totals: total={items.count()}, by_status={inventory_status_text}.',
         f'Visible request totals: total={requests.count()}, by_status={request_status_text}.',
@@ -205,6 +266,7 @@ def build_context(user, question, conversation=None, mode='assistant', referred_
         f'Support directory (staff/admin the user can contact, with role, department as location, and phone): {_support_directory_text()}',
         'When asked who the staff/admin are or where they are located, answer from the support directory above (department is their location).',
         'Item pickup and returns are handled in person by staff/admin; an item\'s borrow limit/due date is in its record. You cannot schedule pickups.',
+        *_assistant_guidance_lines(user, q),
         f'Mode: {mode}.',
         'Recent conversation memory:',
         _conversation_memory(conversation),

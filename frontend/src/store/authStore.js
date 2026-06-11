@@ -5,6 +5,8 @@ import authService from '../services/authService';
 import { setAccessToken } from '../services/api';
 import { formatApiError } from '../utils/errorUtils';
 import useUIStore from './uiStore';
+import useChatStore from './chatStore';
+import useNotificationStore from './notificationStore';
 
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 let idleTimer = null;
@@ -339,6 +341,10 @@ const useAuthStore = create(
                 setAccessToken(null);
                 // Reset UI settings to defaults
                 useUIStore.getState().resetToDefaults();
+                // Wipe live per-user state so the next account on this browser
+                // never sees the previous user's chats or notifications.
+                useChatStore.getState().reset();
+                useNotificationStore.getState().clear();
                 set({
                     user: null,
                     token: null,

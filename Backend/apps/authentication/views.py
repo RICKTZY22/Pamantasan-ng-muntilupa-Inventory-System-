@@ -317,8 +317,9 @@ class ProfilePictureView(APIView):
 
 
 class AuditLogView(APIView):
-    """Staff/admin listing of audit events. Filters: ?action=, ?user=<id>,
-    ?date=YYYY-MM-DD, ?limit= (<=200). Clearing (DELETE) stays admin-only."""
+    """Staff/admin listing of audit events. Filters: ?action=, ?user=<id or name>,
+    ?role=, ?date=YYYY-MM-DD, ?date_from=, ?date_to=, ?item=<name>,
+    ?request=<id>, ?limit= (<=200). Clearing (DELETE) stays admin-only."""
 
     def get_permissions(self):
         if self.request.method == 'DELETE':
@@ -346,13 +347,44 @@ class AuditLogView(APIView):
                 AuditLog.REQUEST_APPROVED, AuditLog.REQUEST_REJECTED,
             ])
 
-        user_filter = request.query_params.get('user')
+        user_filter = request.query_params.get('user', '').strip()
         if user_filter:
-            qs = qs.filter(user_id=user_filter)
+            if user_filter.isdigit():
+                qs = qs.filter(user_id=user_filter)
+            else:
+                from django.db.models import Q as _Q
+                qs = qs.filter(
+                    _Q(user__username__icontains=user_filter)
+                    | _Q(user__first_name__icontains=user_filter)
+                    | _Q(user__last_name__icontains=user_filter)
+                    | _Q(username__icontains=user_filter)
+                )
 
-        date_filter = request.query_params.get('date')
+        role_filter = request.query_params.get('role', '').strip()
+        if role_filter:
+            qs = qs.filter(user__role=role_filter)
+
+        # Invalid dates are ignored instead of erroring the whole listing.
+        from django.utils.dateparse import parse_date
+        date_filter = parse_date(request.query_params.get('date') or '')
         if date_filter:
             qs = qs.filter(timestamp__date=date_filter)
+        date_from = parse_date(request.query_params.get('date_from') or '')
+        if date_from:
+            qs = qs.filter(timestamp__date__gte=date_from)
+        date_to = parse_date(request.query_params.get('date_to') or '')
+        if date_to:
+            qs = qs.filter(timestamp__date__lte=date_to)
+
+        # Items and requests live in the details text (e.g. 'Approved request #12
+        # "Camera"'), so these are detail substring filters.
+        item_filter = request.query_params.get('item', '').strip()
+        if item_filter:
+            qs = qs.filter(details__icontains=item_filter)
+
+        request_filter = request.query_params.get('request', '').strip()
+        if request_filter:
+            qs = qs.filter(details__icontains=f'#{request_filter}')
 
         try:
             limit = min(int(request.query_params.get('limit', 50)), 200)

@@ -145,6 +145,97 @@ class RequestXssTests(APITestCase):
         self.assertEqual(req.status, Request.Status.APPROVED)
         self.assertEqual(self.item.quantity, 1)
 
+
+class RequestBorrowerSummaryTests(APITestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.staff = User.objects.create_user(
+            username='staff-summary',
+            email='staff.summary@plmun.edu.ph',
+            password='password',
+            role='STAFF',
+        )
+        self.student = User.objects.create_user(
+            username='student-summary',
+            email='student.summary@plmun.edu.ph',
+            password='password',
+            first_name='Ana',
+            last_name='Cruz',
+            role='STUDENT',
+            department='CICS',
+            student_id='23149842',
+            credit_score=95,
+            overdue_count=1,
+            early_return_count=2,
+        )
+        self.other = User.objects.create_user(
+            username='other-summary',
+            email='other.summary@plmun.edu.ph',
+            password='password',
+            first_name='Ben',
+            last_name='Reyes',
+            role='STUDENT',
+            student_id='23149843',
+        )
+        self.item = Item.objects.create(
+            name='Borrower Panel Laptop',
+            category=Item.Category.ELECTRONICS,
+            quantity=3,
+            status=Item.Status.AVAILABLE,
+            access_level='STUDENT',
+        )
+        self.request = Request.objects.create(
+            item=self.item,
+            item_name=self.item.name,
+            requested_by=self.student,
+            quantity=1,
+            purpose='Panel QA',
+        )
+        self.other_request = Request.objects.create(
+            item=self.item,
+            item_name=self.item.name,
+            requested_by=self.other,
+            quantity=1,
+            purpose='Hidden from Ana',
+        )
+
+    @staticmethod
+    def _results(response):
+        return response.data.get('results', response.data)
+
+    def test_staff_list_includes_borrower_summary(self):
+        self.client.force_authenticate(self.staff)
+
+        response = self.client.get('/api/requests/')
+
+        self.assertEqual(response.status_code, 200)
+        row = next(item for item in self._results(response) if item['id'] == self.request.id)
+        self.assertEqual(row['borrower']['fullName'], 'Ana Cruz')
+        self.assertEqual(row['borrower']['email'], 'student.summary@plmun.edu.ph')
+        self.assertEqual(row['borrower']['studentId'], '23149842')
+        self.assertEqual(row['borrower']['department'], 'CICS')
+        self.assertEqual(row['borrower']['creditScore'], 95)
+        self.assertEqual(row['borrower']['overdueCount'], 1)
+        self.assertEqual(row['borrower']['earlyReturnCount'], 2)
+
+    def test_student_list_only_exposes_own_borrower_summary(self):
+        self.client.force_authenticate(self.student)
+
+        response = self.client.get('/api/requests/')
+
+        self.assertEqual(response.status_code, 200)
+        rows = self._results(response)
+        self.assertEqual([row['id'] for row in rows], [self.request.id])
+        self.assertEqual(rows[0]['borrower']['email'], 'student.summary@plmun.edu.ph')
+        self.assertNotEqual(rows[0]['borrower']['email'], 'other.summary@plmun.edu.ph')
+
+    def test_non_staff_serializer_does_not_expose_other_borrower(self):
+        factory_request = type('RequestContext', (), {'user': self.student})()
+
+        data = RequestSerializer(self.other_request, context={'request': factory_request}).data
+
+        self.assertIsNone(data['borrower'])
+
     def test_cancelled_request_cannot_be_cancelled_twice(self):
         req = Request.objects.create(
             item=self.item,
@@ -345,7 +436,8 @@ class ReturnHandshakeTests(APITestCase):
         self.assertEqual(self.student.early_return_count, 1)
 
     def test_confirmed_late_return_deducts_credit_and_can_disable_account(self):
-        self.student.credit_score = 80
+        # 79 - 5 = 74: strictly below the 75 threshold, so the account disables.
+        self.student.credit_score = 79
         self.student.save(update_fields=['credit_score'])
         self.req.expected_return = timezone.now() - timedelta(days=2)
         self.req.save(update_fields=['expected_return'])
@@ -357,7 +449,7 @@ class ReturnHandshakeTests(APITestCase):
 
         self.student.refresh_from_db()
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(self.student.credit_score, 75)
+        self.assertEqual(self.student.credit_score, 74)
         self.assertEqual(self.student.overdue_count, 1)
         self.assertFalse(self.student.is_active)
 
@@ -1099,8 +1191,12 @@ class AutoDecisionRuleTests(TestCase):
         self.assertIn('credit score', decision.reasons[0])
 
     def test_disabled_credit_score_auto_rejects(self):
-        decision = self._eval(credit_score=75)
+        decision = self._eval(credit_score=74)
         self.assertEqual(decision.action, ad.AUTO_REJECT)
+
+    def test_credit_at_threshold_goes_to_review_not_reject(self):
+        decision = self._eval(credit_score=75)
+        self.assertEqual(decision.action, ad.NEEDS_REVIEW)
 
     def test_stock_shortage_auto_rejects_before_approval(self):
         decision = self._eval(quantity=4, stock=3)
@@ -1163,8 +1259,8 @@ class AutoDecisionCreateTests(APITestCase):
         self.consumable.refresh_from_db()
         self.assertEqual(self.consumable.quantity, 10)
 
-    def test_credit_score_threshold_blocks_new_requests_and_disables_account(self):
-        self.student.credit_score = 75
+    def test_credit_score_below_threshold_blocks_new_requests_and_disables_account(self):
+        self.student.credit_score = 74
         self.student.save(update_fields=['credit_score'])
 
         resp = self._submit(self.consumable, qty=1)
@@ -1173,6 +1269,17 @@ class AutoDecisionCreateTests(APITestCase):
         self.assertEqual(resp.status_code, 403)
         self.assertEqual(resp.data['code'], 'CREDIT_SCORE_DISABLED')
         self.assertFalse(self.student.is_active)
+
+    def test_credit_score_at_threshold_can_still_submit(self):
+        # Exactly 75 keeps access — only BELOW the threshold disables.
+        self.student.credit_score = 75
+        self.student.save(update_fields=['credit_score'])
+
+        resp = self._submit(self.consumable, qty=1)
+
+        self.student.refresh_from_db()
+        self.assertEqual(resp.status_code, 201)
+        self.assertTrue(self.student.is_active)
 
     @patch('apps.messaging.assistant.explain_decision', return_value='Rule explanation.')
     def test_auto_mode_high_priority_returnable_stays_pending(self, _mock):

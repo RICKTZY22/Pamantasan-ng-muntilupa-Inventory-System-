@@ -162,6 +162,26 @@ class UserViewSet(viewsets.ModelViewSet):
             'message': 'User flag removed.',
             'user': UserSerializer(user).data,
         })
+
+    @action(detail=True, methods=['post'])
+    def restore_credit(self, request, pk=None):
+        """Admin restores a borrower disabled by low credit: score back to 100,
+        account re-activated, flag cleared. Reactivating alone isn't enough —
+        the request-create gate re-disables any account below the threshold.
+        overdue_count is preserved as lifetime history."""
+        user = self.get_object()
+        user.credit_score = 100
+        user.is_active = True
+        user.is_flagged = False
+        user.save(update_fields=['credit_score', 'is_active', 'is_flagged'])
+
+        log_action(AuditLog.USER_UPDATED, user=request.user,
+                   details=f'Restored credit for user {user.pk} ({user.username}) to 100 and reactivated the account',
+                   request=request)
+        return Response({
+            'message': 'Credit restored and account reactivated.',
+            'user': UserSerializer(user).data,
+        })
     
     @action(detail=False, methods=['get'])
     def stats(self, request):

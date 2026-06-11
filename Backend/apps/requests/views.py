@@ -163,7 +163,7 @@ class RequestViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        if getattr(request.user, 'credit_score', 100) <= User.CREDIT_DISABLE_THRESHOLD:
+        if getattr(request.user, 'credit_score', 100) < User.CREDIT_DISABLE_THRESHOLD:
             if request.user.is_active:
                 request.user.is_active = False
                 request.user.save(update_fields=['is_active'])
@@ -209,7 +209,7 @@ class RequestViewSet(viewsets.ModelViewSet):
             )
 
         return Response(
-            RequestSerializer(req).data,
+            RequestSerializer(req, context={'request': request}).data,
             status=status.HTTP_201_CREATED,
         )
 
@@ -387,7 +387,7 @@ class RequestViewSet(viewsets.ModelViewSet):
             if not ok:
                 return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response(RequestSerializer(req).data)
+        return Response(RequestSerializer(req, context={'request': request}).data)
 
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
@@ -405,7 +405,7 @@ class RequestViewSet(viewsets.ModelViewSet):
                 req, request.user, serializer.validated_data.get('reason', ''), request=request,
             )
 
-        return Response(RequestSerializer(req).data)
+        return Response(RequestSerializer(req, context={'request': request}).data)
 
     @action(detail=True, methods=['post'])
     def complete(self, request, pk=None):
@@ -444,7 +444,7 @@ class RequestViewSet(viewsets.ModelViewSet):
             sender=request.user,
         )
 
-        return Response(RequestSerializer(req).data)
+        return Response(RequestSerializer(req, context={'request': request}).data)
 
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
@@ -471,7 +471,7 @@ class RequestViewSet(viewsets.ModelViewSet):
                    details=f'Cancelled request #{req.id} for "{req.item_name}"',
                    request=request)
 
-        return Response(RequestSerializer(req).data)
+        return Response(RequestSerializer(req, context={'request': request}).data)
 
     @action(detail=True, methods=['post'])
     def request_return(self, request, pk=None):
@@ -515,7 +515,7 @@ class RequestViewSet(viewsets.ModelViewSet):
             message=f'{requester_name} is returning "{req.item_name}". Please confirm receipt.',
             sender=request.user,
         )
-        return Response(RequestSerializer(req).data)
+        return Response(RequestSerializer(req, context={'request': request}).data)
 
     @action(detail=True, methods=['post'])
     def confirm_return(self, request, pk=None):
@@ -589,7 +589,7 @@ class RequestViewSet(viewsets.ModelViewSet):
                 message=f'{confirmer_name} confirmed the return of your borrowed item "{req.item_name}".',
                 sender=request.user,
             )
-        return Response(RequestSerializer(req).data)
+        return Response(RequestSerializer(req, context={'request': request}).data)
 
     @action(detail=True, methods=['post'])
     def cancel_return(self, request, pk=None):
@@ -616,7 +616,7 @@ class RequestViewSet(viewsets.ModelViewSet):
         log_action(AuditLog.OTHER, user=request.user,
                    details=f'Cancelled pending return for request #{req.id} "{req.item_name}"',
                    request=request)
-        return Response(RequestSerializer(req).data)
+        return Response(RequestSerializer(req, context={'request': request}).data)
 
     @action(detail=False, methods=['delete'])
     def clear_completed(self, request):
@@ -771,7 +771,7 @@ class RequestViewSet(viewsets.ModelViewSet):
             status__in=OUTSTANDING_STATUSES,
             expected_return__lt=timezone.now(),
         )
-        serializer = RequestSerializer(overdue, many=True)
+        serializer = RequestSerializer(overdue, many=True, context={'request': request})
         return Response(serializer.data)
 
     @action(detail=False, methods=['post'])

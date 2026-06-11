@@ -20,7 +20,7 @@ const ROLE_FILTERS = [
 ];
 
 const Users = () => {
-    const { users, loading, stats, fetchUsers, updateUserRole, toggleUserStatus, deleteUser: deleteUserAPI, unflagUser } = useUsers();
+    const { users, loading, stats, fetchUsers, updateUserRole, toggleUserStatus, deleteUser: deleteUserAPI, unflagUser, restoreCreditUser } = useUsers();
     const [search, setSearch] = useState('');
     const [roleFilter, setRoleFilter] = useState('ALL');
     const [statusFilter, setStatusFilter] = useState('ALL'); // ALL | ACTIVE | INACTIVE | FLAGGED
@@ -73,6 +73,10 @@ const Users = () => {
     const handleUnflag = async (id) => {
         const r = await unflagUser(id);
         flash(r.success ? (r.message || 'User unflagged') : `✗ ${r.error}`, r.success ? 'success' : 'error');
+    };
+    const handleRestoreCredit = async (id) => {
+        const r = await restoreCreditUser(id);
+        flash(r.success ? (r.message || 'Credit restored') : `✗ ${r.error}`, r.success ? 'success' : 'error');
     };
     const handleDelete = async () => {
         if (!deleteTarget) return;
@@ -174,6 +178,7 @@ const Users = () => {
                                 onChangeRole={handleRoleChange}
                                 onToggleStatus={handleToggleStatus}
                                 onUnflag={handleUnflag}
+                                onRestoreCredit={handleRestoreCredit}
                                 onDelete={setDeleteTarget}
                             />
                         ))}

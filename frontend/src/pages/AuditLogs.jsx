@@ -87,7 +87,11 @@ const AuditLogs = () => {
     const [logsLoading, setLogsLoading] = useState(true);
     const [actionFilter, setActionFilter] = useState('');
     const [userFilter, setUserFilter] = useState('');
-    const [dateFilter, setDateFilter] = useState('');
+    const [roleFilter2, setRoleFilter2] = useState('');
+    const [dateFilter, setDateFilter] = useState('');   // from
+    const [dateTo, setDateTo] = useState('');
+    const [itemFilter, setItemFilter] = useState('');
+    const [requestFilter, setRequestFilter] = useState('');
 
     // History filters
     const [search, setSearch] = useState('');
@@ -115,16 +119,27 @@ const AuditLogs = () => {
 
     useEffect(() => { fetchRequests(); }, [fetchRequests]);
 
-    // Action + date filter server-side; user filter is applied client-side (below).
+    // Server-side filters (action/role/date-range/item/request); the user
+    // dropdown stays client-side below. Debounced so text inputs don't spam.
     useEffect(() => {
         let active = true;
         setLogsLoading(true);
-        auditService.getLogs({ action: actionFilter, date: dateFilter, limit: 200 })
-            .then((data) => { if (active) setLogs(Array.isArray(data) ? data : []); })
-            .catch(() => { if (active) setLogs([]); })
-            .finally(() => { if (active) setLogsLoading(false); });
-        return () => { active = false; };
-    }, [actionFilter, dateFilter]);
+        const t = setTimeout(() => {
+            auditService.getLogs({
+                action: actionFilter,
+                role: roleFilter2,
+                dateFrom: dateFilter,
+                dateTo,
+                item: itemFilter.trim(),
+                request: requestFilter.trim(),
+                limit: 200,
+            })
+                .then((data) => { if (active) setLogs(Array.isArray(data) ? data : []); })
+                .catch(() => { if (active) setLogs([]); })
+                .finally(() => { if (active) setLogsLoading(false); });
+        }, 350);
+        return () => { active = false; clearTimeout(t); };
+    }, [actionFilter, roleFilter2, dateFilter, dateTo, itemFilter, requestFilter]);
 
     const userOptions = useMemo(() => {
         const seen = new Map();
@@ -242,7 +257,7 @@ const AuditLogs = () => {
                 {/* ── Activity ── */}
                 {tab === 'activity' && (
                     <div className="space-y-4">
-                        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                        <div className="flex flex-wrap items-center gap-2.5">
                             <select value={actionFilter} onChange={(e) => setActionFilter(e.target.value)} className={SELECT} aria-label="Filter by action">
                                 {ACTION_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                             </select>
@@ -250,9 +265,22 @@ const AuditLogs = () => {
                                 <option value="">All users</option>
                                 {userOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                             </select>
-                            <input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className={SELECT} aria-label="Filter by date" />
-                            {(actionFilter || userFilter || dateFilter) && (
-                                <Button variant="ghost" size="sm" onClick={() => { setActionFilter(''); setUserFilter(''); setDateFilter(''); }}>Clear</Button>
+                            <select value={roleFilter2} onChange={(e) => setRoleFilter2(e.target.value)} className={SELECT} aria-label="Filter by role">
+                                <option value="">All roles</option>
+                                <option value="STUDENT">Student</option>
+                                <option value="FACULTY">Faculty</option>
+                                <option value="STAFF">Staff</option>
+                                <option value="ADMIN">Administrator</option>
+                            </select>
+                            <input type="text" value={itemFilter} onChange={(e) => setItemFilter(e.target.value)} placeholder="Item name…" className={SELECT} aria-label="Filter by item" />
+                            <input type="text" value={requestFilter} onChange={(e) => setRequestFilter(e.target.value.replace(/\D/g, ''))} placeholder="Request #" inputMode="numeric" className={`${SELECT} w-28`} aria-label="Filter by request number" />
+                            <div className="flex items-center gap-1.5">
+                                <input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className={SELECT} aria-label="From date" />
+                                <span className="text-xs text-gray-400">to</span>
+                                <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className={SELECT} aria-label="To date" />
+                            </div>
+                            {(actionFilter || userFilter || roleFilter2 || dateFilter || dateTo || itemFilter || requestFilter) && (
+                                <Button variant="ghost" size="sm" onClick={() => { setActionFilter(''); setUserFilter(''); setRoleFilter2(''); setDateFilter(''); setDateTo(''); setItemFilter(''); setRequestFilter(''); }}>Clear</Button>
                             )}
                         </div>
 

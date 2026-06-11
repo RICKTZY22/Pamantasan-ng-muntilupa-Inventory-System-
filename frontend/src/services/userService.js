@@ -22,6 +22,11 @@ const userService = {
         return response.data;
     },
 
+    restoreCredit: async (id) => {
+        const response = await api.post(`/users/${id}/restore_credit/`);
+        return response.data;
+    },
+
     delete: async (id) => {
         const response = await api.delete(`/users/${id}/`);
         return response.data;

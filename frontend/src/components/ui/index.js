@@ -9,7 +9,6 @@ export { default as AnimatedBackground } from './AnimatedBackground';
 export { default as ImageUpload } from './ImageUpload';
 export { default as QRCodeModal } from './QRCodeModal';
 
-export { default as AnimatedInput } from './AnimatedInput';
 export { default as RequestProgressBar } from './RequestProgressBar';
 export { default as DueCountdown } from './DueCountdown';
 export { default as Toggle } from './Toggle';

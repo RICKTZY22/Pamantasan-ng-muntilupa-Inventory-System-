@@ -39,8 +39,8 @@ const TableHead = ({ children, className = '' }) => (
     </th>
 );
 
-const TableCell = ({ children, className = '' }) => (
-    <td className={`px-4 py-2.5 text-gray-700 dark:text-gray-300 ${className}`}>
+const TableCell = ({ children, className = '', ...rest }) => (
+    <td className={`px-4 py-2.5 text-gray-700 dark:text-gray-300 ${className}`} {...rest}>
         {children}
     </td>
 );

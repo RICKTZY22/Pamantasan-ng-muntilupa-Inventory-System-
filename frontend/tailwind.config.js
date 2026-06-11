@@ -30,6 +30,16 @@ export default {
           dark: '#475569',
           light: '#94a3b8',
         },
+        // Fixed PLMun brand greens for pre-login surfaces (auth pages, footer).
+        // Deliberately NOT the runtime-themeable `accent` — brand identity on
+        // public pages must not change with a user's saved theme.
+        plmun: {
+          DEFAULT: '#006B3F',
+          light: '#0E8A57',
+          dark: '#00553A',
+          deep: '#004430',
+          gold: '#D4A017',
+        },
         // Dashboard Pro surface colors
         surface: {
           DEFAULT: '#ffffff',
@@ -39,7 +49,7 @@ export default {
         },
       },
       fontFamily: {
-        sans: ['"Inter Variable"', 'Inter', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', '"Helvetica Neue"', 'Arial', 'sans-serif'],
+        sans: ['"Plus Jakarta Sans Variable"', '"Plus Jakarta Sans"', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', '"Helvetica Neue"', 'Arial', 'sans-serif'],
       },
       borderRadius: {
         DEFAULT: '8px',

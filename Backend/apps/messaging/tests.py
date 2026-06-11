@@ -42,7 +42,10 @@ class ConsumerResilienceTests(TestCase):
 
         consumer._handle_send = boom
         # The dispatch guard logs and continues — this must not raise.
-        async_to_sync(consumer.receive_json)({'type': 'message.send', 'conversationId': 1})
+        with patch('apps.messaging.consumers.logger.exception') as mock_log:
+            async_to_sync(consumer.receive_json)({'type': 'message.send', 'conversationId': 1})
+
+        mock_log.assert_called_once()
 
     def test_unknown_or_empty_frames_are_ignored(self):
         consumer = ChatConsumer()
@@ -82,7 +85,8 @@ class AssistantApiTests(APITestCase):
 
     @override_settings(GEMINI_API_KEY='', ASSISTANT_PROVIDER='gemini')
     def test_missing_gemini_key_returns_clear_error_without_fake_answer(self):
-        response = self.client.post('/api/messaging/assistant/messages/', {'body': 'What is low stock?'}, format='json')
+        with self.assertLogs('django.request', level='ERROR'):
+            response = self.client.post('/api/messaging/assistant/messages/', {'body': 'What is low stock?'}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
         self.assertIn('Gemini is not configured', response.data['detail'])
@@ -107,7 +111,8 @@ class AssistantApiTests(APITestCase):
     @override_settings(ASSISTANT_PROVIDER='ollama')
     @patch('apps.messaging.assistant.requests.post', side_effect=__import__('requests').exceptions.ConnectionError())
     def test_ollama_unreachable_returns_clear_error(self, _mock_post):
-        response = self.client.post('/api/messaging/assistant/messages/', {'body': 'How many items?'}, format='json')
+        with self.assertLogs('django.request', level='ERROR'):
+            response = self.client.post('/api/messaging/assistant/messages/', {'body': 'How many items?'}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
         self.assertIn('Ollama is not reachable', response.data['detail'])
@@ -116,7 +121,8 @@ class AssistantApiTests(APITestCase):
 
     @override_settings(ASSISTANT_PROVIDER='bad-provider')
     def test_unknown_assistant_provider_returns_clear_error(self):
-        response = self.client.post('/api/messaging/assistant/messages/', {'body': 'How many items?'}, format='json')
+        with self.assertLogs('django.request', level='ERROR'):
+            response = self.client.post('/api/messaging/assistant/messages/', {'body': 'How many items?'}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
         self.assertIn('Unknown assistant provider', response.data['detail'])
@@ -199,6 +205,38 @@ class AssistantApiTests(APITestCase):
         self.assertIn('Joe Cruz', context)
         self.assertIn('department=Library', context)
         self.assertIn('09171234567', context)
+
+    def test_profane_question_gets_deescalation_guidance(self):
+        context = assistant.build_context(self.user, 'Why the hell was my request rejected?')
+
+        self.assertIn('De-escalate calmly', context)
+        self.assertIn('do not repeat profanity', context)
+        self.assertIn('answer the real request', context)
+
+    def test_detail_question_allows_longer_explanation(self):
+        context = assistant.build_context(self.user, 'Can you explain how automation works in detail?')
+
+        self.assertIn('may exceed six lines', context)
+        self.assertIn('structured, practical', context)
+
+    def test_credit_question_includes_policy_and_user_state(self):
+        self.user.credit_score = 80
+        self.user.overdue_count = 2
+        self.user.early_return_count = 3
+        self.user.is_flagged = True
+        self.user.save(update_fields=['credit_score', 'overdue_count', 'early_return_count', 'is_flagged'])
+
+        context = assistant.build_context(self.user, 'How do I improve credits and why am I banned?')
+
+        self.assertIn('late/overdue returns deduct 5 points', context)
+        self.assertIn('early confirmed returns add 2 points', context)
+        self.assertIn('drops below 75 credit is disabled', context)
+        self.assertIn('auto-approval requires credit_score=100', context)
+        self.assertIn('credit below 100 goes to staff review', context)
+        self.assertIn('credit_score=80', context)
+        self.assertIn('overdue_count=2', context)
+        self.assertIn('early_return_count=3', context)
+        self.assertIn('is_flagged=yes', context)
 
     @override_settings(ASSISTANT_PROVIDER='ollama')
     @patch('apps.messaging.assistant.requests.post')

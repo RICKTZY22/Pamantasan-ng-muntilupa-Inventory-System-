@@ -86,6 +86,8 @@ const AccountDeactivated = () => {
 
                         <Link
                             to="/login"
+                            // Login reads this flag to show its "account deactivated" notice.
+                            onClick={() => localStorage.setItem('plmun-deactivated', '1')}
                             className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 font-semibold rounded-xl hover:bg-gray-200 dark:hover:bg-gray-600 transition-all duration-200 text-sm"
                         >
                             <ArrowLeft size={16} />

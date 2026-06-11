@@ -18,11 +18,12 @@
 @layer base {
   body {
     @apply bg-gray-50 text-gray-900;
-    font-family: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-family: "Plus Jakarta Sans Variable", "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-optical-sizing: auto;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     line-height: 1.6;
-    letter-spacing: -0.011em;
+    letter-spacing: 0;
   }
 
   .dark body {
@@ -803,3 +804,16 @@
 .dark .modal-backdrop {
   background-color: rgba(0, 0, 0, 0.7);
 }
+
+/* ── Light island ──
+   Sections that are deliberately light in BOTH themes (the public marketing
+   sections under the auth pages). Counters the global .dark remaps above so
+   headings/cards keep their intended light-mode colors. */
+.dark .light-island .text-gray-900 { color: rgb(17, 24, 39); }
+.dark .light-island .text-gray-800 { color: rgb(31, 41, 55); }
+.dark .light-island .text-gray-700 { color: rgb(55, 65, 81); }
+.dark .light-island .text-gray-600 { color: rgb(75, 85, 99); }
+.dark .light-island .text-gray-500 { color: rgb(107, 114, 128); }
+.dark .light-island .bg-white { background-color: rgb(255, 255, 255); }
+.dark .light-island .bg-gray-50 { background-color: rgb(249, 250, 251); }
+.dark .light-island .bg-gray-100 { background-color: rgb(243, 244, 246); }

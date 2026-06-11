@@ -5,6 +5,7 @@ import {
     StatusBars,
     HighlightCard,
     ScheduleRail,
+    DueCalendar,
     RecentRequestsTable,
     AreaChartComponent,
     PieChartComponent,
@@ -15,6 +16,7 @@ import { useInventory, useRequests } from '../hooks';
 import { Link, useNavigate } from 'react-router-dom';
 import useAuthStore from '../store/authStore';
 import { hasMinRole, ROLES } from '../utils/roles';
+import { buildDueCalendarEvents } from '../utils/dueCalendar';
 
 // Fixed, domain-semantic accent colors (kept independent of the user's theme
 // accent so status always reads clearly): available/positive, pending, overdue.
@@ -136,6 +138,8 @@ const Dashboard = () => {
             .slice(0, 5);
     }, [myRequests]);
     const activeBorrows = useMemo(() => myRequests.filter(r => r.status === 'APPROVED' && r.isReturnable && r.expectedReturn), [myRequests]);
+    const myDueEvents = useMemo(() => buildDueCalendarEvents(myRequests), [myRequests]);
+    const staffDueEvents = useMemo(() => buildDueCalendarEvents(requests, { includeBorrower: true }), [requests]);
 
     const [favorites, setFavorites] = useState([]);
     useEffect(() => {
@@ -234,6 +238,12 @@ const Dashboard = () => {
                     </div>
 
                     <div className="space-y-6">
+                        <DueCalendar
+                            title="My Due Calendar"
+                            events={myDueEvents}
+                            emptyMessage="No active returns scheduled"
+                        />
+
                         <ScheduleRail
                             title="Active Borrows"
                             icon={Clock}
@@ -356,6 +366,13 @@ const Dashboard = () => {
 
                 {/* Side rail */}
                 <div className="space-y-6">
+                    <DueCalendar
+                        title="Return Calendar"
+                        events={staffDueEvents}
+                        showBorrower
+                        emptyMessage="No active returns scheduled"
+                    />
+
                     <ScheduleRail
                         title="Due Soon"
                         icon={Clock}

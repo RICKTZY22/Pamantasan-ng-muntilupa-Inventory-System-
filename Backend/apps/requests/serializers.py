@@ -8,6 +8,7 @@ from .overdue import OUTSTANDING_STATUSES
 
 class RequestSerializer(serializers.ModelSerializer):
 
+    borrower = serializers.SerializerMethodField()
     requestedBy = serializers.SerializerMethodField()
     requestedById = serializers.IntegerField(source='requested_by_id', read_only=True)
     requestedByStudentId = serializers.SerializerMethodField()
@@ -33,7 +34,7 @@ class RequestSerializer(serializers.ModelSerializer):
     class Meta:
         model = Request
         fields = [
-            'id', 'item', 'itemName', 'requestedBy', 'requestedById', 'requestedByStudentId',
+            'id', 'item', 'itemName', 'borrower', 'requestedBy', 'requestedById', 'requestedByStudentId',
             'quantity', 'purpose', 'status', 'priority', 'requestDate', 'expectedReturn',
             'approvedBy', 'approvedAt', 'rejectionReason', 'returnedAt',
             'returnRequestedAt', 'returnRequestedByName', 'returnConfirmedByName',
@@ -41,7 +42,7 @@ class RequestSerializer(serializers.ModelSerializer):
             'autoRecommendation', 'autoNote', 'autoDecided',
         ]
         read_only_fields = [
-            'id', 'requestedBy', 'requestedById', 'requestedByStudentId',
+            'id', 'borrower', 'requestedBy', 'requestedById', 'requestedByStudentId',
             'requestDate', 'approvedBy', 'approvedAt',
             'rejectionReason', 'returnedAt', 'returnRequestedAt',
             'returnRequestedByName', 'returnConfirmedByName',
@@ -52,6 +53,44 @@ class RequestSerializer(serializers.ModelSerializer):
             'status', 'priority', 'item', 'quantity',
             'autoRecommendation', 'autoNote', 'autoDecided',
         ]
+
+    def _borrower_payload(self, user, *, include_staff_fields=False):
+        request = self.context.get('request')
+        avatar_url = None
+        if getattr(user, 'avatar', None):
+            avatar_url = request.build_absolute_uri(user.avatar.url) if request else user.avatar.url
+
+        payload = {
+            'id': user.id,
+            'fullName': user.get_full_name() or user.username,
+            'username': user.username,
+            'studentId': getattr(user, 'student_id', '') or '',
+            'role': user.role,
+            'department': user.department or '',
+            'avatarUrl': avatar_url,
+        }
+        if include_staff_fields:
+            payload.update({
+                'email': user.email,
+                'isActive': user.is_active,
+                'isFlagged': user.is_flagged,
+                'overdueCount': user.overdue_count,
+                'creditScore': user.credit_score,
+                'earlyReturnCount': user.early_return_count,
+            })
+        return payload
+
+    def get_borrower(self, obj):
+        viewer = getattr(self.context.get('request'), 'user', None)
+        if not viewer or not getattr(viewer, 'is_authenticated', False):
+            return None
+
+        borrower = obj.requested_by
+        if viewer.has_min_role('STAFF'):
+            return self._borrower_payload(borrower, include_staff_fields=True)
+        if viewer.id == obj.requested_by_id:
+            return self._borrower_payload(borrower, include_staff_fields=True)
+        return None
 
     def get_requestedBy(self, obj) -> str:
         return obj.requested_by.get_full_name() or obj.requested_by.username
